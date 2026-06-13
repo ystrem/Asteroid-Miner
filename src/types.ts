@@ -1,0 +1,96 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+export interface Vector2D {
+  x: number;
+  y: number;
+}
+
+export type AsteroidSize = 'huge' | 'large' | 'medium' | 'small';
+export type OreType = 'crystal' | 'diamond' | 'obsidian';
+
+export interface Asteroid {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angularVelocity: number;
+  size: AsteroidSize;
+  hp: number;
+  maxHp: number;
+  radius: number;
+  vertices: Vector2D[];
+  color: string;
+  points: number;
+}
+
+export interface Laser {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  damage: number;
+  isPiercing: boolean;
+  piercedAsteroidIds: string[];
+  radius: number;
+  width: number;
+  color: string;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface Ore {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  type: OreType;
+  color: string;
+  radius: number;
+  pulseScale: number;
+  pulseDir: number;
+}
+
+export interface Particle {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  color: string;
+  size: number;
+  alpha: number;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface Star {
+  x: number;
+  y: number;
+  size: number;
+  brightness: number;
+  speed: number;
+}
+
+export interface Upgrades {
+  laserLevel: number;    // 1 to 4
+  magnetLevel: number;   // 1 to 5
+  hullLevel: number;     // 1 to 5
+  shieldLevel: number;   // 1 to 5
+  engineLevel: number;   // 1 to 5
+}
+
+export interface PlayerStats {
+  crystals: number;
+  diamonds: number;
+  obsidian: number;
+  highScore: number;
+  totalAsteroidsMined: number;
+}
