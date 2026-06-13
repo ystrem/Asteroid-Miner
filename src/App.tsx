@@ -51,7 +51,10 @@ import {
   Layers, 
   Hourglass, 
   Compass, 
-  HelpCircle 
+  HelpCircle,
+  Gamepad,
+  User,
+  Users
 } from 'lucide-react';
 
 const ASTEROID_COLORS = {
@@ -71,15 +74,25 @@ export default function App() {
   const [isShopOpen, setIsShopOpen] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(!getSoundState());
   const [showHowTo, setShowHowTo] = useState<boolean>(false);
+  const [gameMode, setGameMode] = useState<'single' | 'coop'>('single');
+  const [gamepadsDetected, setGamepadsDetected] = useState<boolean[]>([false, false]);
 
   // Floating notifications/gains to display on screen
   const [gains, setGains] = useState<{ id: string; text: string; x: number; y: number; color: string }[]>([]);
 
   // HUD stats synchronizers
+  // Player 1
   const [hull, setHull] = useState<number>(100);
   const [maxHull, setMaxHull] = useState<number>(100);
   const [shield, setShield] = useState<number>(0);
   const [maxShield, setMaxShield] = useState<number>(0);
+
+  // Player 2
+  const [p2Hull, setP2Hull] = useState<number>(100);
+  const [p2MaxHull, setP2MaxHull] = useState<number>(100);
+  const [p2Shield, setP2Shield] = useState<number>(0);
+  const [p2MaxShield, setP2MaxShield] = useState<number>(0);
+
   const [currentScore, setCurrentScore] = useState<number>(0);
   const [runCrystals, setRunCrystals] = useState<number>(0);
   const [runDiamonds, setRunDiamonds] = useState<number>(0);
@@ -88,14 +101,28 @@ export default function App() {
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
-  // Game entities
-  const playerRef = useRef({
+  // Game entities - Separate Player 1 and Player 2 reference objects
+  const p1Ref = useRef({
     x: 0,
     y: 0,
     vx: 0,
     vy: 0,
-    angle: 0, // In radians
-    targetAngle: 0,
+    angle: -Math.PI / 2, // In radians
+    targetAngle: -Math.PI / 2,
+    thrusting: false,
+    reversing: false,
+    radius: 20,
+    invulnerableTime: 0,
+    lastFired: 0,
+  });
+
+  const p2Ref = useRef({
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    angle: -Math.PI / 2, // In radians
+    targetAngle: -Math.PI / 2,
     thrusting: false,
     reversing: false,
     radius: 20,
@@ -110,6 +137,7 @@ export default function App() {
   const starsRef = useRef<Star[]>([]);
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const mousePos = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const lastInputDeviceRef = useRef<'keyboard' | 'gamepad'>('keyboard');
   const touchJoystick = useRef<{ active: boolean; startX: number; startY: number; curX: number; curY: number }>({
     active: false,
     startX: 0,
@@ -129,6 +157,15 @@ export default function App() {
   const maxHullRef = useRef<number>(100);
   const maxShieldRef = useRef<number>(0);
 
+  const p2MaxHullRef = useRef<number>(100);
+  const p2MaxShieldRef = useRef<number>(0);
+
+  const p1HullRef = useRef<number>(100);
+  const p1ShieldRef = useRef<number>(0);
+  const p2HullRef = useRef<number>(100);
+  const p2ShieldRef = useRef<number>(0);
+  const gameModeRef = useRef<'single' | 'coop'>('single');
+
   // Synchronize state values to refs inside effect
   useEffect(() => {
     upgradesRef.current = upgrades;
@@ -141,6 +178,26 @@ export default function App() {
   useEffect(() => {
     isShopOpenRef.current = isShopOpen;
   }, [isShopOpen]);
+
+  useEffect(() => {
+    p1HullRef.current = hull;
+  }, [hull]);
+
+  useEffect(() => {
+    p1ShieldRef.current = shield;
+  }, [shield]);
+
+  useEffect(() => {
+    p2HullRef.current = p2Hull;
+  }, [p2Hull]);
+
+  useEffect(() => {
+    p2ShieldRef.current = p2Shield;
+  }, [p2Shield]);
+
+  useEffect(() => {
+    gameModeRef.current = gameMode;
+  }, [gameMode]);
 
   // Clean up game loop on component unmount
   useEffect(() => {
@@ -167,6 +224,15 @@ export default function App() {
     // If starting or upgrading, make sure HP doesn't exceed maximums
     setHull(curr => Math.min(curr, calculatedMaxHull));
     setShield(curr => Math.min(curr, calculatedMaxShield));
+
+    // Player 2 Limits
+    p2MaxHullRef.current = calculatedMaxHull;
+    p2MaxShieldRef.current = calculatedMaxShield;
+    setP2MaxHull(calculatedMaxHull);
+    setP2MaxShield(calculatedMaxShield);
+
+    setP2Hull(curr => Math.min(curr, calculatedMaxHull));
+    setP2Shield(curr => Math.min(curr, calculatedMaxShield));
   }, [upgrades]);
 
   // Load HighScore
@@ -187,11 +253,12 @@ export default function App() {
     }, 1500);
   };
 
-  // --- KEYBOARD EVENT HANDLERS ---
+  // --- KEYBOARD & GAMEPAD EVENT HANDLERS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const code = e.code;
       keysPressed.current[code] = true;
+      lastInputDeviceRef.current = 'keyboard';
 
       // Prevent window scrolling with Arrow keys or Spacebar
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code) && isPlaying && !isShopOpen) {
@@ -201,18 +268,41 @@ export default function App() {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keysPressed.current[e.code] = false;
+      lastInputDeviceRef.current = 'keyboard';
     };
 
     const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - mousePos.current.x;
+      const dy = e.clientY - mousePos.current.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        lastInputDeviceRef.current = 'keyboard';
+      }
       mousePos.current = { x: e.clientX, y: e.clientY };
     };
 
     const handleMouseDown = () => {
       keysPressed.current['MouseDown'] = true;
+      lastInputDeviceRef.current = 'keyboard';
     };
 
     const handleMouseUp = () => {
       keysPressed.current['MouseDown'] = false;
+      lastInputDeviceRef.current = 'keyboard';
+    };
+
+    const handleGamepadConnect = () => {
+      const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
+      const updated = [false, false];
+      let foundCount = 0;
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) {
+          if (foundCount < 2) {
+            updated[foundCount] = true;
+            foundCount++;
+          }
+        }
+      }
+      setGamepadsDetected(updated);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -220,6 +310,13 @@ export default function App() {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('gamepadconnected', handleGamepadConnect);
+    window.addEventListener('gamepaddisconnected', handleGamepadConnect);
+
+    // Initial check for already connected gamepads right on mount
+    handleGamepadConnect();
+    // Periodically poll for gamepads to ensure absolute reliability
+    const gamepadPollInterval = setInterval(handleGamepadConnect, 1000);
 
     // Initial stars generation
     generateStarfield();
@@ -239,6 +336,9 @@ export default function App() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('gamepadconnected', handleGamepadConnect);
+      window.removeEventListener('gamepaddisconnected', handleGamepadConnect);
+      clearInterval(gamepadPollInterval);
       window.removeEventListener('resize', handleResize);
     };
   }, [isPlaying, isShopOpen]);
@@ -267,8 +367,8 @@ export default function App() {
     customVx?: number, 
     customVy?: number
   ): Asteroid => {
-    let px = playerRef.current.x;
-    let py = playerRef.current.y;
+    let px = p1Ref.current.x;
+    let py = p1Ref.current.y;
 
     let x = 0;
     let y = 0;
@@ -392,9 +492,15 @@ export default function App() {
     setRunDiamonds(0);
     setRunObsidian(0);
 
-    // Re-initialize player location and status
-    playerRef.current = {
-      x: 0,
+    // Calculate initial armor hull strength
+    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel === 5 ? 20 : 0);
+    const calculatedMaxShield = upgrades.shieldLevel > 0 
+      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel === 4 ? 10 : 0)
+      : 0;
+
+    // Re-initialize player locations and statuses
+    p1Ref.current = {
+      x: gameMode === 'coop' ? -55 : 0,
       y: 0,
       vx: 0,
       vy: 0,
@@ -407,14 +513,36 @@ export default function App() {
       lastFired: 0,
     };
 
-    // Calculate initial armor hull strength
-    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel === 5 ? 20 : 0);
-    const calculatedMaxShield = upgrades.shieldLevel > 0 
-      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel === 4 ? 10 : 0)
-      : 0;
-
     setHull(calculatedMaxHull);
     setShield(calculatedMaxShield);
+    p1HullRef.current = calculatedMaxHull;
+    p1ShieldRef.current = calculatedMaxShield;
+
+    if (gameMode === 'coop') {
+      p2Ref.current = {
+        x: 55,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        targetAngle: -Math.PI / 2,
+        thrusting: false,
+        reversing: false,
+        radius: 20,
+        invulnerableTime: 60, // briefly invulnerable on start
+        lastFired: 0,
+      };
+      setP2Hull(calculatedMaxHull);
+      setP2Shield(calculatedMaxShield);
+      p2HullRef.current = calculatedMaxHull;
+      p2ShieldRef.current = calculatedMaxShield;
+    } else {
+      // Deactivate P2
+      setP2Hull(0);
+      setP2Shield(0);
+      p2HullRef.current = 0;
+      p2ShieldRef.current = 0;
+    }
 
     // Initial entities clear
     asteroidsRef.current = [];
@@ -589,8 +717,7 @@ export default function App() {
   };
 
   // --- LASER BULLET EMISSION INTER ACTION ---
-  const fireActiveLaser = () => {
-    const player = playerRef.current;
+  const fireActiveLaser = (player: typeof p1Ref.current, playerNum: 1 | 2) => {
     const now = Date.now();
     
     // Fire rates depend on weapon tier
@@ -603,8 +730,6 @@ export default function App() {
     player.lastFired = now;
 
     // Laser properties
-    let damage = 1;
-    let isPiercing = upgradesRef.current.laserLevel === 4;
     let speed = 9;
     let width = 2;
     let radius = 3;
@@ -621,6 +746,11 @@ export default function App() {
     const baseVx = cos * speed;
     const baseVy = sin * speed;
 
+    // Color code laser by player: Player 1 gets classic red/cyan, Player 2 gets purple/rose
+    const bulletColor = playerNum === 1 
+      ? (upgradesRef.current.laserLevel === 1 ? '#f87171' : upgradesRef.current.laserLevel === 2 ? '#f43f5e' : upgradesRef.current.laserLevel === 3 ? '#38bdf8' : '#e11d48')
+      : (upgradesRef.current.laserLevel === 1 ? '#c084fc' : upgradesRef.current.laserLevel === 2 ? '#a855f7' : upgradesRef.current.laserLevel === 3 ? '#a855f7' : '#ec4899');
+
     if (upgradesRef.current.laserLevel === 1) {
       // Level 1: Simple laser bullet
       const laser: Laser = {
@@ -635,7 +765,7 @@ export default function App() {
         piercedAsteroidIds: [],
         radius,
         width,
-        color: '#f87171', // red light
+        color: bulletColor,
         lifetime: 0,
         maxLifetime: 75,
       };
@@ -655,7 +785,7 @@ export default function App() {
         piercedAsteroidIds: [],
         radius: 5,
         width: 4,
-        color: '#f43f5e', // deep heavy red-orange
+        color: bulletColor,
         lifetime: 0,
         maxLifetime: 85,
       };
@@ -680,7 +810,7 @@ export default function App() {
           piercedAsteroidIds: [],
           radius: 3,
           width: 3,
-          color: '#38bdf8', // sky bluish plasma
+          color: bulletColor,
           lifetime: 0,
           maxLifetime: 60,
         };
@@ -701,7 +831,7 @@ export default function App() {
         piercedAsteroidIds: [],
         radius: 7,
         width: 5,
-        color: '#c084fc', // purple antimatter beam
+        color: bulletColor,
         lifetime: 0,
         maxLifetime: 100,
       };
@@ -720,88 +850,239 @@ export default function App() {
       return;
     }
 
-    const player = playerRef.current;
+    const p1 = p1Ref.current;
+    const p2 = p2Ref.current;
 
-    // --- 1. SHIP ROTATION & DIRECTION ---
-    // Smooth input orientation interpolation to face current mouse cursor
-    const centerX = window.innerWidth / 2;
-    const centerY = window.innerHeight / 2;
-    
-    // Angle from screen center to mouse pos
-    const mouseAngle = Math.atan2(mousePos.current.y - centerY, mousePos.current.x - centerX);
-    player.targetAngle = mouseAngle;
+    const canvas = canvasRef.current;
+    const width = canvas ? canvas.width : window.innerWidth;
+    const height = canvas ? canvas.height : window.innerHeight;
+    const centerX = width / 2;
+    const centerY = height / 2;
 
-    // Direct interpolation for responsive feel
-    let deltaAngle = player.targetAngle - player.angle;
-    while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-    while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-
-    const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-    player.angle += deltaAngle * Math.min(1, rotSpeed);
-
-    // --- 2. ACCELERATION / FLYING FORWARD & BACKWARD ---
-    // Calculate speed coefficients based on engine level
-    const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
-    const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
-    const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003; // less drift at higher tiers
-
-    player.thrusting = keysPressed.current['KeyW'] || keysPressed.current['ArrowUp'] || keysPressed.current['MouseDown'];
-    player.reversing = keysPressed.current['KeyS'] || keysPressed.current['ArrowDown'];
-
-    if (player.thrusting) {
-      player.vx += Math.cos(player.angle) * thrustPower;
-      player.vy += Math.sin(player.angle) * thrustPower;
-
-      // Exhaust trailing dust particle particles
-      if (Math.random() < 0.4) {
-        const backAngle = player.angle + Math.PI + (Math.random() * 0.6 - 0.3);
-        const ex = player.x - Math.cos(player.angle) * 18;
-        const ey = player.y - Math.sin(player.angle) * 18;
-        particlesRef.current.push({
-          id: Math.random().toString(36).substring(2, 9),
-          x: ex,
-          y: ey,
-          vx: Math.cos(backAngle) * (Math.random() * 3 + 1.2) + player.vx * 0.4,
-          vy: Math.sin(backAngle) * (Math.random() * 3 + 1.2) + player.vy * 0.4,
-          color: Math.random() < 0.35 ? '#3b82f6' : '#f97316', // neon blue rocket exhaust core / raw orange flame
-          size: Math.random() * 3.5 + 1.5,
-          alpha: 1.0,
-          lifetime: 0,
-          maxLifetime: 20 + Math.floor(Math.random() * 15),
-        });
+    // --- READ ACTIVE GAMEPAD DEVICES ---
+    const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
+    let gamepad1 = null;
+    let gamepad2 = null;
+    let foundCount = 0;
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i]) {
+        if (foundCount === 0) {
+          gamepad1 = gamepads[i];
+          foundCount++;
+        } else if (foundCount === 1) {
+          gamepad2 = gamepads[i];
+          foundCount++;
+        }
       }
-    } else if (player.reversing) {
-      // Brake/Slide backward
-      player.vx -= Math.cos(player.angle) * (thrustPower * 0.55);
-      player.vy -= Math.sin(player.angle) * (thrustPower * 0.55);
     }
 
-    // Apply absolute momentum caps
-    let speed = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
-    if (speed > maxSpeed) {
-      player.vx = (player.vx / speed) * maxSpeed;
-      player.vy = (player.vy / speed) * maxSpeed;
+    // --- 1. PLAYER 1 INPUT PROCESS ---
+    let handledP1Rotation = false;
+
+    if (gamepad1) {
+      const axisX = gamepad1.axes[0];
+      const axisY = gamepad1.axes[1];
+      
+      // Gamepad intent detection
+      const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18;
+      const isAnyButtonActive = gamepad1.buttons.some(b => b.pressed);
+      if (isAnyAxisActive || isAnyButtonActive) {
+        lastInputDeviceRef.current = 'gamepad';
+      }
+
+      // Rotate ship
+      if (Math.abs(axisX) > 0.18) {
+        p1.angle += axisX * 0.075;
+        handledP1Rotation = true;
+      }
+      
+      // Thrust / Reverse
+      p1.thrusting = axisY < -0.18;
+      p1.reversing = axisY > 0.18;
+
+      // Fire
+      const btnFire = gamepad1.buttons[0]?.pressed || gamepad1.buttons[7]?.pressed;
+      if (btnFire) {
+        fireActiveLaser(p1, 1);
+      }
+    } else {
+      // Keyboard input for Player 1
+      p1.thrusting = !!(keysPressed.current['KeyW'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single');
+      p1.reversing = !!keysPressed.current['KeyS'];
+
+      if (keysPressed.current['KeyA']) {
+        p1.angle -= 0.08;
+        handledP1Rotation = true;
+      } else if (keysPressed.current['KeyD']) {
+        p1.angle += 0.08;
+        handledP1Rotation = true;
+      }
+
+      // Fire
+      if (keysPressed.current['Space'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single') {
+        fireActiveLaser(p1, 1);
+      }
     }
 
-    // Apply friction simulation slide
-    player.vx *= inertiaFriction;
-    player.vy *= inertiaFriction;
+    // Single-player mouse-centric fallback steering
+    if (!handledP1Rotation && gameModeRef.current === 'single' && lastInputDeviceRef.current !== 'gamepad') {
+      const mouseAngle = Math.atan2(mousePos.current.y - centerY, mousePos.current.x - centerX);
+      p1.targetAngle = mouseAngle;
 
-    // Shift coordinates of the players physical location
-    player.x += player.vx;
-    player.y += player.vy;
+      let deltaAngle = p1.targetAngle - p1.angle;
+      while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+      while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
 
-    // Brief invulnerability decrease
-    if (player.invulnerableTime > 0) {
-      player.invulnerableTime--;
+      const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+      p1.angle += deltaAngle * Math.min(1, rotSpeed);
     }
 
-    // Shield passive regeneration tick
-    if (upgradesRef.current.shieldLevel > 0 && shield < maxShieldRef.current) {
+    // --- 2. PLAYER 2 INPUT PROCESS (COOP MODE ONLY) ---
+    if (gameModeRef.current === 'coop') {
+      let handledP2Rotation = false;
+
+      if (gamepad2) {
+        const axisX = gamepad2.axes[0];
+        const axisY = gamepad2.axes[1];
+        
+        // Gamepad intent detection
+        const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18;
+        const isAnyButtonActive = gamepad2.buttons.some(b => b.pressed);
+        if (isAnyAxisActive || isAnyButtonActive) {
+          lastInputDeviceRef.current = 'gamepad';
+        }
+
+        // Rotate ship
+        if (Math.abs(axisX) > 0.18) {
+          p2.angle += axisX * 0.075;
+          handledP2Rotation = true;
+        }
+        
+        // Thrust / Reverse
+        p2.thrusting = axisY < -0.18;
+        p2.reversing = axisY > 0.18;
+
+        // Fire
+        const btnFire = gamepad2.buttons[0]?.pressed || gamepad2.buttons[7]?.pressed;
+        if (btnFire) {
+          fireActiveLaser(p2, 2);
+        }
+      } else {
+        // Keyboard inputs for Player 2
+        p2.thrusting = !!(keysPressed.current['ArrowUp'] || keysPressed.current['KeyI']);
+        p2.reversing = !!(keysPressed.current['ArrowDown'] || keysPressed.current['KeyK']);
+
+        if (keysPressed.current['ArrowLeft'] || keysPressed.current['KeyJ']) {
+          p2.angle -= 0.08;
+          handledP2Rotation = true;
+        } else if (keysPressed.current['ArrowRight'] || keysPressed.current['KeyL']) {
+          p2.angle += 0.08;
+          handledP2Rotation = true;
+        }
+
+        // Fire
+        if (
+          keysPressed.current['Enter'] || 
+          keysPressed.current['ShiftRight'] || 
+          keysPressed.current['KeyO']
+        ) {
+          fireActiveLaser(p2, 2);
+        }
+      }
+    }
+
+    // --- 3. APPLY PHYSICAL SPEEDS ---
+    const activePlayersNum = gameModeRef.current === 'coop' ? 2 : 1;
+    const listPlayers = [p1, p2];
+
+    for (let i = 0; i < activePlayersNum; i++) {
+      const p = listPlayers[i];
+      const pCurrentHull = i === 0 ? p1HullRef.current : p2HullRef.current;
+      
+      // Skip dead players
+      if (pCurrentHull <= 0) continue;
+
+      const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
+      const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
+      const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
+
+      if (p.thrusting) {
+        p.vx += Math.cos(p.angle) * thrustPower;
+        p.vy += Math.sin(p.angle) * thrustPower;
+
+        // Jet exhaust fire simulation
+        if (Math.random() < 0.4) {
+          const backAngle = p.angle + Math.PI + (Math.random() * 0.6 - 0.3);
+          const ex = p.x - Math.cos(p.angle) * 18;
+          const ey = p.y - Math.sin(p.angle) * 18;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: ex,
+            y: ey,
+            vx: Math.cos(backAngle) * (Math.random() * 3 + 1.2) + p.vx * 0.4,
+            vy: Math.sin(backAngle) * (Math.random() * 3 + 1.2) + p.vy * 0.4,
+            color: i === 0 
+              ? (Math.random() < 0.35 ? '#3b82f6' : '#f97316')
+              : (Math.random() < 0.35 ? '#a855f7' : '#ec4899'), // rose booster exhaust for P2
+            size: Math.random() * 3.5 + 1.5,
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 20 + Math.floor(Math.random() * 15),
+          });
+        }
+      } else if (p.reversing) {
+        p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
+        p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
+      }
+
+      // Max absolute velocity clamp
+      let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+      if (speed > maxSpeed) {
+        p.vx = (p.vx / speed) * maxSpeed;
+        p.vy = (p.vy / speed) * maxSpeed;
+      }
+
+      // Space resistance drift
+      p.vx *= inertiaFriction;
+      p.vy *= inertiaFriction;
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.invulnerableTime > 0) {
+        p.invulnerableTime--;
+      }
+    }
+
+    // --- 4. COOPERATIVE BOUNDARY COMPARTMENT (Prevent straying off screen) ---
+    if (gameModeRef.current === 'coop' && p1HullRef.current > 0 && p2HullRef.current > 0) {
+      const dxDist = p1.x - p2.x;
+      const dyDist = p1.y - p2.y;
+      const spaceDist = Math.sqrt(dxDist * dxDist + dyDist * dyDist);
+      const maximumLimit = Math.min(width, height) * 0.78; // comfortable viewing circle
+      if (spaceDist > maximumLimit) {
+        const excess = spaceDist - maximumLimit;
+        const pushX = (dxDist / spaceDist) * (excess / 2);
+        const pushY = (dyDist / spaceDist) * (excess / 2);
+
+        p1.x -= pushX;
+        p1.y -= pushY;
+        p2.x += pushX;
+        p2.y += pushY;
+
+        p1.vx *= 0.94;
+        p1.vy *= 0.94;
+        p2.vx *= 0.94;
+        p2.vy *= 0.94;
+      }
+    }
+
+    // --- 5. SHIELD PASSIVE RECHARGE LOOPS ---
+    // Player 1 Shield regen
+    if (p1HullRef.current > 0 && upgradesRef.current.shieldLevel > 0 && p1ShieldRef.current < maxShieldRef.current) {
       if (shieldRegenCooldown.current > 0) {
         shieldRegenCooldown.current--;
       } else {
-        // Regeneration increment factor by level
         const baseRegen = 0.04;
         const powerMultiplier = 1 + (upgradesRef.current.shieldLevel - 1) * 0.35;
         const actualRegen = baseRegen * powerMultiplier;
@@ -812,12 +1093,21 @@ export default function App() {
       }
     }
 
-    // --- 3. AUTO-FIRE ENGAGE ---
-    if (keysPressed.current['Space'] || keysPressed.current['MouseDown']) {
-      fireActiveLaser();
+    // Player 2 Shield regen (Coop only)
+    if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
+      const p2MaxShield = p2MaxShieldRef.current;
+      if (upgradesRef.current.shieldLevel > 0 && p2ShieldRef.current < p2MaxShield) {
+        const baseRegen = 0.04;
+        const powerMultiplier = 1 + (upgradesRef.current.shieldLevel - 1) * 0.35;
+        const actualRegen = baseRegen * powerMultiplier;
+        setP2Shield(curr => {
+          const nextVal = curr + actualRegen;
+          return nextVal >= p2MaxShield ? p2MaxShield : nextVal;
+        });
+      }
     }
 
-    // --- 4. LASER FLIGHT & BOUNDS ---
+    // --- 6. LASER FLIGHT & BOUNDS ---
     lasersRef.current = lasersRef.current.map(laser => {
       laser.x += laser.vx;
       laser.y += laser.vy;
@@ -825,19 +1115,34 @@ export default function App() {
       return laser;
     }).filter(laser => laser.lifetime < laser.maxLifetime);
 
-    // --- 5. ORE SUCKING MAGNET PICS ---
-    // Magnet levels details
+    // --- 7. ORE SUCKING MAGNET PICS ---
     let magnetRadius = 100;
     let magnetPullStrength = 0.22;
     if (upgradesRef.current.magnetLevel === 2) { magnetRadius = 180; magnetPullStrength = 0.28; }
     else if (upgradesRef.current.magnetLevel === 3) { magnetRadius = 260; magnetPullStrength = 0.36; }
     else if (upgradesRef.current.magnetLevel === 4) { magnetRadius = 340; magnetPullStrength = 0.44; }
-    else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; } // gravity center
+    else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; }
 
     oresRef.current = oresRef.current.map(ore => {
-      const dx = ore.x - player.x;
-      const dy = ore.y - player.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Find nearest active player as gravity center
+      let targetPlayer = p1;
+      let dx = ore.x - p1.x;
+      let dy = ore.y - p1.y;
+      let minDist = Math.sqrt(dx * dx + dy * dy);
+
+      if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
+        const dx2 = ore.x - p2.x;
+        const dy2 = ore.y - p2.y;
+        const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        if (dist2 < minDist) {
+          targetPlayer = p2;
+          dx = dx2;
+          dy = dy2;
+          minDist = dist2;
+        }
+      }
+
+      const dist = minDist;
 
       // Pulse graphic animation
       ore.pulseScale += 0.03 * ore.pulseDir;
@@ -846,20 +1151,15 @@ export default function App() {
       }
 
       if (dist < magnetRadius) {
-        // Gravitational drag coefficient towards centered ship
         const pullDirX = -dx / dist;
         const pullDirY = -dy / dist;
-        
-        // Items speed up significantly the closer they are
         const velocityAcc = magnetPullStrength * (1 + (magnetRadius - dist) / 100);
         ore.vx += pullDirX * velocityAcc;
         ore.vy += pullDirY * velocityAcc;
         
-        // Fast tracking friction to keep items orbiting/heading strictly
         ore.vx *= 0.85;
         ore.vy *= 0.85;
       } else {
-        // Idle space friction drift
         ore.vx *= 0.96;
         ore.vy *= 0.96;
       }
@@ -870,20 +1170,27 @@ export default function App() {
       return ore;
     });
 
-    // Check ore collection
+    // Check ore collection with both players independently
     oresRef.current = oresRef.current.filter(ore => {
-      const dx = ore.x - player.x;
-      const dy = ore.y - player.y;
-      const collectDist = player.radius + ore.radius;
+      const dx1 = ore.x - p1.x;
+      const dy1 = ore.y - p1.y;
+      const distP1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      const collidedP1 = p1HullRef.current > 0 && distP1 < p1.radius + ore.radius;
 
-      if (Math.sqrt(dx * dx + dy * dy) < collectDist) {
-        // Collect feedback Spark!
+      let collidedP2 = false;
+      if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
+        const dx2 = ore.x - p2.x;
+        const dy2 = ore.y - p2.y;
+        const distP2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        collidedP2 = distP2 < p2.radius + ore.radius;
+      }
+
+      if (collidedP1 || collidedP2) {
+        const activeCollectorNum = collidedP1 ? 1 : 2;
         playCollectSound(ore.type);
         triggerOreSparkExplosion(ore.x, ore.y, ore.color);
 
-        // Track run additions and compile wallet stats
-        let awardLabel = '+1 Krystal';
-        let walletKey: keyof PlayerStats = 'crystals';
+        let awardLabel = `Hráč ${activeCollectorNum}: +1 Krystal`;
 
         if (ore.type === 'crystal') {
           setRunCrystals(c => c + 1);
@@ -892,7 +1199,7 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = '+1 Krystal';
+          awardLabel = `Hráč ${activeCollectorNum}: +1 Krystal`;
         } else if (ore.type === 'diamond') {
           setRunDiamonds(d => d + 1);
           setStats(curr => {
@@ -900,7 +1207,7 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = '+1 Diamant';
+          awardLabel = `Hráč ${activeCollectorNum}: +1 Diamant`;
         } else if (ore.type === 'obsidian') {
           setRunObsidian(o => o + 1);
           setStats(curr => {
@@ -908,41 +1215,36 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = '+1 Obsidián';
+          awardLabel = `Hráč ${activeCollectorNum}: +1 Obsidián`;
         }
 
-        // Add visual text popup floats
         addGainNotification(awardLabel, ore.color);
-        return false; // delete from collection
+        return false;
       }
       return true;
     });
 
-    // --- 6. ASTEROID COLLISION DYNAMICS ---
+    // --- 8. ASTEROID COLLISION DYNAMICS ---
     asteroidsRef.current.forEach(asteroid => {
-      // Drift movement updates
       asteroid.x += asteroid.vx;
       asteroid.y += asteroid.vy;
       asteroid.angle += asteroid.angularVelocity;
 
-      // Teleport asteroids if they drift way too far from centered player location
-      const pX = player.x;
-      const pY = player.y;
+      // Wrap around anchor location Player 1
+      const pX = p1.x;
+      const pY = p1.y;
       const adx = asteroid.x - pX;
       const ady = asteroid.y - pY;
       const distanceToPlayer = Math.sqrt(adx * adx + ady * ady);
 
-      // Despawn thresholds (>1400px away)
       if (distanceToPlayer > 1300) {
-        // Teleport to a smart location downstream or angled front relative to players velocity
-        const angleOffset = player.vx || player.vy 
-          ? Math.atan2(player.vy, player.vx) + (Math.random() * 1.5 - 0.75)
+        const angleOffset = p1.vx || p1.vy 
+          ? Math.atan2(p1.vy, p1.vx) + (Math.random() * 1.5 - 0.75)
           : Math.random() * Math.PI * 2;
         
         asteroid.x = pX + Math.cos(angleOffset) * 1100;
         asteroid.y = pY + Math.sin(angleOffset) * 1100;
         
-        // Give new speeds heading slightly back
         const pathAngle = angleOffset + Math.PI + (Math.random() * 1.0 - 0.5);
         const spd = Math.random() * 1.3 + 0.4;
         asteroid.vx = Math.cos(pathAngle) * spd;
@@ -950,10 +1252,9 @@ export default function App() {
       }
     });
 
-    // Check LASER BULLET HIT ASTEROID
+    // Check laser hit asteroid
     lasersRef.current.forEach(laser => {
       asteroidsRef.current.forEach(asteroid => {
-        // Don't hit same asteroid multiple times with pierce weapon
         if (laser.isPiercing && laser.piercedAsteroidIds.includes(asteroid.id)) {
           return;
         }
@@ -963,65 +1264,52 @@ export default function App() {
         const radSum = laser.radius + asteroid.radius;
 
         if (ldx * ldx + ldy * ldy < radSum * radSum) {
-          // HIT CONFIRMED
           asteroid.hp -= laser.damage;
           
           if (laser.isPiercing) {
             laser.piercedAsteroidIds.push(asteroid.id);
-            // Pierce beam loses a small portion of energy per block
             laser.vx *= 0.9;
             laser.vy *= 0.9;
           } else {
-            // Remove regular laser bullet immediately
-            laser.lifetime = laser.maxLifetime; // mark for deletion
+            laser.lifetime = laser.maxLifetime;
           }
 
-          // Trigger particle strike sparks near asteroid collision boundary
           triggerOreSparkExplosion(laser.x, laser.y, '#ffffff');
 
-          // Check destruction
           if (asteroid.hp <= 0) {
             handleAsteroidBlowUp(asteroid);
           } else {
-            // Simply play standard high hit chime click
             playExplosionSound('small');
           }
         }
       });
     });
 
-    // Clean marked inactive lasers
     lasersRef.current = lasersRef.current.filter(l => l.lifetime < l.maxLifetime);
 
-    // Check SHIP CRASH INTO ASTEROID
-    if (player.invulnerableTime <= 0) {
+    // --- SHIP CRASH CHECK PLAYER 1 ---
+    if (p1HullRef.current > 0 && p1.invulnerableTime <= 0) {
       asteroidsRef.current.forEach(asteroid => {
-        const sdx = player.x - asteroid.x;
-        const sdy = player.y - asteroid.y;
-        const playerShipHurtDist = player.radius + asteroid.radius - 3; // buffer safety margins
+        const sdx = p1.x - asteroid.x;
+        const sdy = p1.y - asteroid.y;
+        const playerShipHurtDist = p1.radius + asteroid.radius - 3;
 
         if (sdx * sdx + sdy * sdy < playerShipHurtDist * playerShipHurtDist) {
-          // COLLISION IMPULSE CRASH!
           const angle = Math.atan2(sdy, sdx);
-          
-          // Bounce ship in opposing direction
-          player.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
-          player.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
-          player.invulnerableTime = 70; // 70 frames brief recovery red flashing
+          p1.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
+          p1.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
+          p1.invulnerableTime = 70;
 
-          // Base damage proportional to rock mass Size
           let rawDmg = 8;
           if (asteroid.size === 'huge') rawDmg = 38;
           else if (asteroid.size === 'large') rawDmg = 24;
           else if (asteroid.size === 'medium') rawDmg = 14;
 
-          // Armor block reduction factor
-          const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08); // up to 35% damage reduction at level 5
+          const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
           const calculatedDmg = Math.round(rawDmg * armorMultiplier);
 
           playDamageSound();
 
-          // Apply damage calculations shield vs hull
           setShield(currShield => {
             let nextShield = currShield;
             let finalDmgToHull = calculatedDmg;
@@ -1030,23 +1318,26 @@ export default function App() {
               if (currShield >= calculatedDmg) {
                 nextShield = currShield - calculatedDmg;
                 finalDmgToHull = 0;
-                addGainNotification(`ŠTÍT ABSORBOVAL: -${calculatedDmg} HP`, '#60a5fa');
+                addGainNotification(`NÁRAZ H1: ŠTÍT ABS. -${calculatedDmg} HP`, '#38bdf8');
               } else {
                 finalDmgToHull = calculatedDmg - currShield;
                 nextShield = 0;
-                addGainNotification('ŠTÍT KOLABOVAL!', '#ef4444');
+                addGainNotification('H1: ŠTÍT ZNIČEN!', '#ef4444');
                 playShieldDownSound();
               }
             }
 
-            // Apply remaining hull hits
             if (finalDmgToHull > 0) {
               setHull(currHull => {
                 const nextHull = currHull - finalDmgToHull;
-                addGainNotification(`POŠKOZENÍ TRUPU: -${finalDmgToHull} HP`, '#f97316');
+                addGainNotification(`NÁRAZ H1: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
                 
                 if (nextHull <= 0) {
-                  triggerShipCatastrophicFailure();
+                  if (gameModeRef.current === 'single' || p2HullRef.current <= 0) {
+                    triggerShipCatastrophicFailure();
+                  } else {
+                    addGainNotification('HLÁŠENÍ: Hráč 1 byl ZNIČEN! Chraň loď, Hráči 2!', '#ef4444');
+                  }
                   return 0;
                 }
                 return nextHull;
@@ -1056,13 +1347,75 @@ export default function App() {
             return nextShield;
           });
 
-          // Set Shield recharge start delays
-          shieldRegenCooldown.current = 240; // 4 seconds delay before regeneration starts again
+          shieldRegenCooldown.current = 240;
         }
       });
     }
 
-    // --- 7. PARTICLES RENDER TICK ---
+    // --- SHIP CRASH CHECK PLAYER 2 (COOP) ---
+    if (gameModeRef.current === 'coop' && p2HullRef.current > 0 && p2.invulnerableTime <= 0) {
+      asteroidsRef.current.forEach(asteroid => {
+        const sdx = p2.x - asteroid.x;
+        const sdy = p2.y - asteroid.y;
+        const playerShipHurtDist = p2.radius + asteroid.radius - 3;
+
+        if (sdx * sdx + sdy * sdy < playerShipHurtDist * playerShipHurtDist) {
+          const angle = Math.atan2(sdy, sdx);
+          p2.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
+          p2.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
+          p2.invulnerableTime = 70;
+
+          let rawDmg = 8;
+          if (asteroid.size === 'huge') rawDmg = 38;
+          else if (asteroid.size === 'large') rawDmg = 24;
+          else if (asteroid.size === 'medium') rawDmg = 14;
+
+          const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
+          const calculatedDmg = Math.round(rawDmg * armorMultiplier);
+
+          playDamageSound();
+
+          setP2Shield(currShield => {
+            let nextShield = currShield;
+            let finalDmgToHull = calculatedDmg;
+
+            if (currShield > 0) {
+              if (currShield >= calculatedDmg) {
+                nextShield = currShield - calculatedDmg;
+                finalDmgToHull = 0;
+                addGainNotification(`NÁRAZ H2: ŠTÍT ABS. -${calculatedDmg} HP`, '#f43f5e');
+              } else {
+                finalDmgToHull = calculatedDmg - currShield;
+                nextShield = 0;
+                addGainNotification('H2: ŠTÍT ZNIČEN!', '#ef4444');
+                playShieldDownSound();
+              }
+            }
+
+            if (finalDmgToHull > 0) {
+              setP2Hull(currHull => {
+                const nextHull = currHull - finalDmgToHull;
+                addGainNotification(`NÁRAZ H2: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
+                
+                if (nextHull <= 0) {
+                  if (p1HullRef.current <= 0) {
+                    triggerShipCatastrophicFailure();
+                  } else {
+                    addGainNotification('HLÁŠENÍ: Hráč 2 byl ZNIČEN! Chraň loď, Hráči 1!', '#ef4444');
+                  }
+                  return 0;
+                }
+                return nextHull;
+              });
+            }
+
+            return nextShield;
+          });
+        }
+      });
+    }
+
+    // --- 9. PARTICLES RENDER TICK ---
     particlesRef.current = particlesRef.current.map(particle => {
       particle.x += particle.vx;
       particle.y += particle.vy;
@@ -1071,13 +1424,9 @@ export default function App() {
       return particle;
     }).filter(particle => particle.lifetime < particle.maxLifetime);
 
-    // Constant density maintenance of floating asteroid clusters
     populateAsteroidBelt(18);
 
-    // Re-draw canvas scene
     drawGameScene();
-
-    // Trigger next recursive render frame
     animationFrameId.current = requestAnimationFrame(tickGameLoop);
   };
 
@@ -1155,24 +1504,46 @@ export default function App() {
     setIsGameOver(true);
     playExplosionSound('huge');
 
-    // Trigger massive fireworks particles at center screen
-    const px = playerRef.current.x;
-    const py = playerRef.current.y;
-    for (let i = 0; i < 75; i++) {
+    // Explode Player 1
+    const p1x = p1Ref.current.x;
+    const p1y = p1Ref.current.y;
+    for (let i = 0; i < 60; i++) {
       const a = Math.random() * Math.PI * 2;
       const spd = Math.random() * 6.5 + 2.0;
       particlesRef.current.push({
         id: Math.random().toString(36).substring(2, 9),
-        x: px,
-        y: py,
+        x: p1x,
+        y: p1y,
         vx: Math.cos(a) * spd,
         vy: Math.sin(a) * spd,
-        color: ['#f97316', '#ef4444', '#facc15', '#60a5fa'][Math.floor(Math.random() * 4)],
+        color: ['#38bdf8', '#3b82f6', '#facc15', '#ffffff'][Math.floor(Math.random() * 4)],
         size: Math.random() * 5.0 + 2.0,
         alpha: 1.0,
         lifetime: 0,
         maxLifetime: 60 + Math.floor(Math.random() * 40),
       });
+    }
+
+    // Explode Player 2 (if in coop)
+    if (gameModeRef.current === 'coop') {
+      const p2x = p2Ref.current.x;
+      const p2y = p2Ref.current.y;
+      for (let i = 0; i < 60; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const spd = Math.random() * 6.5 + 2.0;
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: p2x,
+          y: p2y,
+          vx: Math.cos(a) * spd,
+          vy: Math.sin(a) * spd,
+          color: ['#f43f5e', '#a855f7', '#facc15', '#ffffff'][Math.floor(Math.random() * 4)],
+          size: Math.random() * 5.0 + 2.0,
+          alpha: 1.0,
+          lifetime: 0,
+          maxLifetime: 60 + Math.floor(Math.random() * 40),
+        });
+      }
     }
 
     if (animationFrameId.current) {
@@ -1236,17 +1607,32 @@ export default function App() {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, width, height);
 
-    const player = playerRef.current;
+    const p1 = p1Ref.current;
+    const p2 = p2Ref.current;
     
+    // Choose dynamic center of projection based on player positions
+    let targetCamX = p1.x;
+    let targetCamY = p1.y;
+
+    if (gameModeRef.current === 'coop') {
+      if (p1HullRef.current > 0 && p2HullRef.current > 0) {
+        targetCamX = (p1.x + p2.x) / 2;
+        targetCamY = (p1.y + p2.y) / 2;
+      } else if (p2HullRef.current > 0) {
+        targetCamX = p2.x;
+        targetCamY = p2.y;
+      }
+    }
+
     // Physical coordinate system camera center mappings
-    const camX = player.x - width / 2;
-    const camY = player.y - height / 2;
+    const camX = targetCamX - width / 2;
+    const camY = targetCamY - height / 2;
 
     // --- A. PARALLAX STARFIELD RENDER ---
     starsRef.current.forEach(star => {
       // Loop star positions symmetrically so stars feel infinite
-      let sx = (star.x - player.x * star.speed) % width;
-      let sy = (star.y - player.y * star.speed) % height;
+      let sx = (star.x - p1.x * star.speed) % width;
+      let sy = (star.y - p1.y * star.speed) % height;
       if (sx < 0) sx += width;
       if (sy < 0) sy += height;
 
@@ -1395,120 +1781,135 @@ export default function App() {
       ctx.restore();
     });
 
-    // --- F. PLAYER MINING SPACESHIP RENDER (CENTER FIXED) ---
-    ctx.save();
-    // Render ship at precise center of screen view
-    ctx.translate(width / 2, height / 2);
-    ctx.rotate(player.angle);
+    // --- F. PLAYER MINING SPACESHIP RENDER (DYNAMIC MIDPOINT CAMERA) ---
+    const drawPlayerShip = (p: any, playerNum: 1 | 2, currentHull: number, currentShield: number, maxShieldVal: number) => {
+      const sx = p.x - camX;
+      const sy = p.y - camY;
 
-    // Give visual damage indicator: Ship flashes if immune / invulnerable
-    const isFlashing = player.invulnerableTime > 0 && Math.floor(player.invulnerableTime / 4) % 2 === 0;
-
-    if (isFlashing) {
-      ctx.globalAlpha = 0.35; // Draw ghost/transparent indicator instead of nothing!
-    }
-
-    // Draw clean Sci-Fi Fighter jet shape
-    // Neon glow
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = '#60a5fa'; // neon blue shield drive glow
-
-    // 1. Thruster rear fire pulse
-    if (player.thrusting) {
-      ctx.fillStyle = '#f97316'; // orange flame
-      ctx.beginPath();
-      ctx.moveTo(-16, -6);
-      ctx.lineTo(-28 - Math.random() * 8, 0);
-      ctx.lineTo(-16, 6);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.fillStyle = '#ffedd5'; // white hot core
-      ctx.beginPath();
-      ctx.moveTo(-16, -3);
-      ctx.lineTo(-22 - Math.random() * 4, 0);
-      ctx.lineTo(-16, 3);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // 2. Main Wings & fuselage
-    ctx.fillStyle = '#1e293b'; // slate-800 titanium structure
-    ctx.strokeStyle = '#38bdf8'; // sky blue glowing panels
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = 'miter';
-
-    ctx.beginPath();
-    // Futuristic jet styling
-    ctx.moveTo(22, 0);       // Ship nose
-    ctx.lineTo(-10, -16);    // Left wing sweep back
-    ctx.lineTo(-18, -12);    // Left flap
-    ctx.lineTo(-14, -5);     // Rear engine hull left
-    ctx.lineTo(-14, 5);      // Rear engine hull right
-    ctx.lineTo(-18, 12);     // Right flap
-    ctx.lineTo(-10, 16);     // Right wing sweep back
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // 3. Cockpit canopy bubble (Jetglass)
-    ctx.fillStyle = '#38bdf8'; // glowing cyan
-    ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(0, -5);
-    ctx.lineTo(-6, -3);
-    ctx.lineTo(-6, 3);
-    ctx.lineTo(0, 5);
-    ctx.closePath();
-    ctx.fill();
-
-    // 4. Heavy weapon muzzle rails based on Upgrade level!
-    ctx.strokeStyle = '#f87171';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    
-    if (upgradesRef.current.laserLevel === 1) {
-      // Single central gun barrel
-      ctx.moveTo(6, 0);
-      ctx.lineTo(18, 0);
-    } else if (upgradesRef.current.laserLevel === 2) {
-      // Dual heavy gun barrels
-      ctx.moveTo(-2, -8); ctx.lineTo(16, -8);
-      ctx.moveTo(-2, 8); ctx.lineTo(16, 8);
-    } else if (upgradesRef.current.laserLevel === 3) {
-      // Triple outriggers
-      ctx.moveTo(-2, -10); ctx.lineTo(14, -10);
-      ctx.moveTo(6, 0); ctx.lineTo(19, 0);
-      ctx.moveTo(-2, 10); ctx.lineTo(14, 10);
-    } else {
-      // Level 4 Antimatter Cannon rails
-      ctx.strokeStyle = '#c084fc'; // purple core
-      ctx.moveTo(-5, -6); ctx.lineTo(18, -4);
-      ctx.moveTo(-5, 6); ctx.lineTo(18, 4);
-      ctx.moveTo(5, -2); ctx.lineTo(21, 0);
-      ctx.moveTo(5, 2); ctx.lineTo(21, 0);
-    }
-    ctx.stroke();
-
-    // 5. Active Energy Shield Bubble Render
-    if (upgradesRef.current.shieldLevel > 0 && shield > 0) {
       ctx.save();
-      ctx.rotate(-player.angle); // shield bubble is static circle, no rotates
-      ctx.strokeStyle = `rgba(56, 189, 248, ${0.15 + (shield / maxShield) * 0.4})`; // blue glow alpha shifts with remaining shield
-      ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = 10;
-      ctx.lineWidth = 1.8;
+      ctx.translate(sx, sy);
+      ctx.rotate(p.angle);
+
+      const isFlashing = p.invulnerableTime > 0 && Math.floor(p.invulnerableTime / 4) % 2 === 0;
+      if (isFlashing) {
+        ctx.globalAlpha = 0.35;
+      }
+
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = playerNum === 1 ? '#60a5fa' : '#a855f7';
+
+      // 1. Thruster rear fire pulse
+      if (p.thrusting) {
+        ctx.fillStyle = playerNum === 1 ? '#f97316' : '#ec4899';
+        ctx.beginPath();
+        ctx.moveTo(-16, -6);
+        ctx.lineTo(-28 - Math.random() * 8, 0);
+        ctx.lineTo(-16, 6);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ffedd5';
+        ctx.beginPath();
+        ctx.moveTo(-16, -3);
+        ctx.lineTo(-22 - Math.random() * 4, 0);
+        ctx.lineTo(-16, 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // 2. Main Wings & fuselage
+      ctx.fillStyle = playerNum === 1 ? '#1e293b' : '#1e1b4b';
+      ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'miter';
+
       ctx.beginPath();
-      ctx.arc(0, 0, player.radius + 8, 0, Math.PI * 2);
+      ctx.moveTo(22, 0);
+      ctx.lineTo(-10, -16);
+      ctx.lineTo(-18, -12);
+      ctx.lineTo(-14, -5);
+      ctx.lineTo(-14, 5);
+      ctx.lineTo(-18, 12);
+      ctx.lineTo(-10, 16);
+      ctx.closePath();
+      ctx.fill();
       ctx.stroke();
+
+      // 3. Cockpit canopy bubble
+      ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#ec4899';
+      ctx.beginPath();
+      ctx.moveTo(10, 0);
+      ctx.lineTo(0, -5);
+      ctx.lineTo(-6, -3);
+      ctx.lineTo(-6, 3);
+      ctx.lineTo(0, 5);
+      ctx.closePath();
+      ctx.fill();
+
+      // 4. Heavy weapon muzzle rails based on Upgrade level!
+      ctx.strokeStyle = playerNum === 1 ? '#f87171' : '#c084fc';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      
+      if (upgradesRef.current.laserLevel === 1) {
+        ctx.moveTo(6, 0);
+        ctx.lineTo(18, 0);
+      } else if (upgradesRef.current.laserLevel === 2) {
+        ctx.moveTo(-2, -8); ctx.lineTo(16, -8);
+        ctx.moveTo(-2, 8); ctx.lineTo(16, 8);
+      } else if (upgradesRef.current.laserLevel === 3) {
+        ctx.moveTo(-2, -10); ctx.lineTo(14, -10);
+        ctx.moveTo(6, 0); ctx.lineTo(19, 0);
+        ctx.moveTo(-2, 10); ctx.lineTo(14, 10);
+      } else {
+        ctx.strokeStyle = playerNum === 1 ? '#c084fc' : '#ec4899';
+        ctx.moveTo(-5, -6); ctx.lineTo(18, -4);
+        ctx.moveTo(-5, 6); ctx.lineTo(18, 4);
+        ctx.moveTo(5, -2); ctx.lineTo(21, 0);
+        ctx.moveTo(5, 2); ctx.lineTo(21, 0);
+      }
+      ctx.stroke();
+
+      // 5. Active Energy Shield Bubble Render
+      if (upgradesRef.current.shieldLevel > 0 && currentShield > 0) {
+        ctx.save();
+        ctx.rotate(-p.angle);
+        ctx.strokeStyle = playerNum === 1 
+          ? `rgba(56, 189, 248, ${0.15 + (currentShield / maxShieldVal) * 0.4})`
+          : `rgba(168, 85, 247, ${0.15 + (currentShield / maxShieldVal) * 0.4})`;
+        ctx.shadowColor = playerNum === 1 ? '#38bdf8' : '#a855f7';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Badge tag label
+      ctx.save();
+      ctx.rotate(-p.angle);
+      ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Player ${playerNum}`, 0, -p.radius - 12);
       ctx.restore();
+
+      ctx.restore();
+    };
+
+    // Render P1
+    if (p1HullRef.current > 0) {
+      drawPlayerShip(p1, 1, p1HullRef.current, shield, maxShieldRef.current);
     }
-    
-    ctx.restore();
+
+    // Render P2
+    if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
+      drawPlayerShip(p2, 2, p2HullRef.current, p2ShieldRef.current, p2MaxShieldRef.current);
+    }
 
     // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE (SUBTLY DRAW RANGE IN SCREEN CARD) ---
     if (upgradesRef.current.magnetLevel > 1 && keysPressed.current['ShiftLeft']) {
-      // Highlight pulling radius when holding shift
       let drawMagnetRadius = 100;
       if (upgradesRef.current.magnetLevel === 2) drawMagnetRadius = 180;
       else if (upgradesRef.current.magnetLevel === 3) drawMagnetRadius = 260;
@@ -1520,7 +1921,8 @@ export default function App() {
       ctx.lineWidth = 1.2;
       ctx.setLineDash([6, 8]);
       ctx.beginPath();
-      ctx.arc(width/2, height/2, drawMagnetRadius, 0, Math.PI * 2);
+      // Orbiting player 1
+      ctx.arc(p1.x - camX, p1.y - camY, drawMagnetRadius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -1643,69 +2045,116 @@ export default function App() {
 
             {/* Embedded Mini Controls Card */}
             {showHowTo && (
-              <div className="mt-2 bg-slate-950/90 border border-slate-800 p-3 rounded-xl max-w-xs text-xs space-y-1.5 text-slate-300 shadow-2xl animate-fade-in pr-5">
+              <div className="mt-2 bg-slate-950/90 border border-slate-800 p-3 rounded-xl max-w-xs text-xs space-y-2 text-slate-300 shadow-2xl animate-fade-in pr-5">
                 <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block mb-1">Letový manuál</span>
-                <p>• <b>Myš (pohyb):</b> Míření lodě</p>
-                <p>• <b>Levé Tlačítko / Mezerník:</b> Střelba lasery</p>
-                <p>• <b>Klávesa [ W ] / [ Šipka Nahoru ]:</b> Let vpřed</p>
-                <p>• <b>Klávesa [ S ] / [ Šipka Dolů ]:</b> Zpátečka / Brzda</p>
-                <p>• <b>Podržet [ SHIFT ]:</b> Zobrazit dosah magnetu</p>
-                <p className="text-[10px] text-slate-500 font-mono mt-1 border-t border-slate-900 pt-1">Loď je pevně uprostřed, prostor kolem ní se inteligentně posouvá.</p>
+                <p className="text-cyan-400 font-bold border-b border-slate-900 pb-0.5 text-[10px]">Hráč 1 (Modrý):</p>
+                <p>• <b>Let:</b> Klávesy [ W / S ] nebo Gamepad Levá páčka</p>
+                <p>• <b>Rotace:</b> [ A / D ] / Myš</p>
+                <p>• <b>Střelba:</b> [ Mezerník ] / Levý klik / Gamepad [ A ]</p>
+                
+                <p className="text-purple-400 font-bold border-b border-slate-900 pb-0.5 pt-1 text-[10px]">Hráč 2 (Fialový - Kooporace):</p>
+                <p>• <b>Let:</b> Šipka nahoru/dolů nebo klávesy [ I / K ]</p>
+                <p>• <b>Rotace:</b> Šipky vlevo/vpravo nebo klávesy [ J / L ]</p>
+                <p>• <b>Střelba:</b> [ Enter ] / Pravý Shift / klávesa [ O ]</p>
+                <p className="text-[10px] text-slate-500 font-mono mt-1 border-t border-slate-900 pt-1">Prostor se inteligentně posouvá na průměrný midpoint lodí.</p>
               </div>
             )}
           </div>
 
           {/* BOTTOM ROW STATE METERS: Hull & Shields */}
-          <div className="w-full max-w-sm sm:max-w-md mx-auto pointer-events-auto bg-slate-950/90 border border-slate-850 p-3.5 sm:p-4 rounded-2xl shadow-2xl space-y-2.5 select-none self-center">
+          <div className="w-full max-w-sm sm:max-w-xl mx-auto pointer-events-auto flex flex-col md:flex-row gap-3 md:gap-4 justify-center items-stretch select-none self-center">
             
-            {/* Health (Hull) Bar */}
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs font-mono">
-                <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[10px]">
-                  <span className="w-2 h-2 rounded-full bg-orange-500" />
-                  Stav trupu
-                </span>
-                <span className="text-orange-400 font-bold">{hull} / {maxHull} HP</span>
-              </div>
-              <div className="w-full bg-slate-900 h-3 rounded-full border border-slate-800 overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-200 ${hull > 40 ? 'bg-orange-500' : 'bg-red-600 animate-pulse'}`}
-                  style={{ width: `${(hull / maxHull) * 100}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Shield Bar (if upgraded) */}
-            {upgrades.shieldLevel > 0 ? (
-              <div className="space-y-1 animate-fade-in">
-                <div className="flex justify-between text-xs font-mono">
-                  <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[10px]">
-                    <Shield className="w-3 h-3 text-blue-400 fill-current" />
-                    Energetický štít
+            {/* Player 1 widgets widget */}
+            <div className="flex-1 bg-slate-950/9d border border-slate-850/90 p-3 sm:p-3.5 rounded-2xl shadow-xl space-y-2">
+              <span className="text-cyan-400 font-black text-[10px] uppercase tracking-wider block border-b border-slate-900 pb-1">🚀 Hráč 1 (Solo / P1)</span>
+              
+              {/* Health (Hull) Bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] font-mono">
+                  <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                    Trup lodi
                   </span>
-                  <span className="text-blue-400 font-bold">{Math.round(shield)} / {maxShield} HP</span>
+                  <span className="text-orange-400 font-bold">{hull} / {maxHull} HP</span>
                 </div>
-                <div className="w-full bg-slate-900 h-3 rounded-full border border-slate-800 overflow-hidden">
+                <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
                   <div 
-                    className="h-full bg-blue-400 transition-all duration-100 shadow-md shadow-blue-500/50"
-                    style={{ width: `${(shield / maxShield) * 100}%` }}
+                    className={`h-full transition-all duration-200 ${hull > 40 ? 'bg-orange-500' : 'bg-red-600 animate-pulse'}`}
+                    style={{ width: `${Math.max(0, (hull / maxHull) * 100)}%` }}
                   />
                 </div>
               </div>
-            ) : (
-              <div className="text-[10px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1.5 rounded-lg">
-                Energetické štíty chybí • Dokuj v doku a kup štít!
+
+              {/* Shield Bar (if upgraded) */}
+              {upgrades.shieldLevel > 0 ? (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-mono">
+                    <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
+                      <Shield className="w-2.5 h-2.5 text-blue-400 fill-current" />
+                      Energetický štít
+                    </span>
+                    <span className="text-blue-400 font-bold">{Math.round(shield)} / {maxShield} HP</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
+                    <div 
+                      className="h-full bg-blue-400 transition-all duration-100 shadow-md shadow-blue-500/50"
+                      style={{ width: `${Math.max(0, (shield / maxShield) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[9px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1 rounded-lg">
+                  Chybí Štíty
+                </div>
+              )}
+            </div>
+
+            {/* Player 2 widget (Only shown in coop mode) */}
+            {gameMode === 'coop' && (
+              <div className="flex-1 bg-slate-950/9d border border-purple-950/70 p-3 sm:p-3.5 rounded-2xl shadow-xl space-y-2 animate-fade-in">
+                <span className="text-purple-400 font-black text-[10px] uppercase tracking-wider block border-b border-slate-900 pb-1">🛸 Hráč 2 (P2)</span>
+                
+                {/* Health (Hull) Bar */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-mono">
+                    <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                      Trup lodi
+                    </span>
+                    <span className="text-rose-400 font-bold">{p2Hull} / {p2MaxHull} HP</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-200 ${p2Hull > 40 ? 'bg-rose-500' : 'bg-red-600 animate-pulse'}`}
+                      style={{ width: `${Math.max(0, (p2Hull / p2MaxHull) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Shield Bar (if upgraded) */}
+                {upgrades.shieldLevel > 0 ? (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
+                        <Shield className="w-2.5 h-2.5 text-purple-400 fill-current" />
+                        Energetický štít
+                      </span>
+                      <span className="text-purple-400 font-bold">{Math.round(p2Shield)} / {p2MaxShield} HP</span>
+                    </div>
+                    <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
+                      <div 
+                        className="h-full bg-purple-400 transition-all duration-100 shadow-md shadow-purple-500/50"
+                        style={{ width: `${Math.max(0, (p2Shield / p2MaxShield) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[9px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1 rounded-lg">
+                    Chybí Štíty
+                  </div>
+                )}
               </div>
             )}
-
-            {/* Current Ship Stats Indicator Summary */}
-            <div className="flex justify-between text-[10px] text-slate-500 font-mono uppercase bg-slate-950 border border-slate-900 rounded-lg p-1.5 px-2.5">
-              <span>Trysky: Lvl {upgrades.engineLevel}</span>
-              <span>•</span>
-              <span>Zbraň: Lvl {upgrades.laserLevel}</span>
-              <span>•</span>
-              <span>Magnet: Lvl {upgrades.magnetLevel}</span>
-            </div>
 
           </div>
 
@@ -1776,6 +2225,51 @@ export default function App() {
               <p className="text-[11px] text-slate-400 italic pt-1.5 border-t border-slate-900 leading-normal">
                 <b>Fixed-Position mechanika:</b> Lodní trup je stabilně vystředěný na obrazovce, zatímco vesmírné prostředí drží koordinované posouvání, což ti dává maximální přehled nad nebe bez zbytečných okrajových mantinelů!
               </p>
+            </div>
+
+            {/* Game mode selector */}
+            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-3 text-left">
+              <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block">Vyberte Herní Režim</span>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => setGameMode('single')}
+                  className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider border cursor-pointer select-none transition-all duration-200 flex items-center justify-center gap-2 ${
+                    gameMode === 'single'
+                      ? 'bg-cyan-950/50 border-cyan-500 text-cyan-400 shadow-lg shadow-cyan-950/50'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-300'
+                  }`}
+                  id="mode-select-single-btn"
+                >
+                  <User className="w-4 h-4 text-cyan-400" />
+                  Sólo Mise (1 hráč)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGameMode('coop')}
+                  className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider border cursor-pointer select-none transition-all duration-200 flex items-center justify-center gap-2 ${
+                    gameMode === 'coop'
+                      ? 'bg-purple-950/50 border-purple-500 text-purple-400 shadow-lg shadow-purple-950/50'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-300'
+                  }`}
+                  id="mode-select-coop-btn"
+                >
+                  <Users className="w-4 h-4 text-purple-400" />
+                  Kooperace (2 hráči)
+                </button>
+              </div>
+
+              {/* Gamepad connection status detection */}
+              {gamepadsDetected ? (
+                <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-mono bg-emerald-950/20 border border-emerald-900/30 px-3 py-1.5 rounded-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Detekován herní ovladač (Gamepad)! Připraven pro obě lodi.</span>
+                </div>
+              ) : (
+                <div className="text-[10px] text-slate-500 font-mono italic px-1">
+                  💡 Tip: Můžete zapojit USB/Bluetooth gamepad! Hra ho automaticky podporuje.
+                </div>
+              )}
             </div>
 
             {/* Launch Actions */}
