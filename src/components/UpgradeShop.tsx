@@ -78,6 +78,12 @@ export default function UpgradeShop({
           description: 'Ultimátní energetický laser prorazí menší úlomky a letí dál.',
           costs: { crystals: 850, diamonds: 12, obsidian: 4 },
         },
+        {
+          level: 5,
+          title: 'Kvantová kaskáda',
+          description: 'Hlava s 5 hlavněmi! Prorážející hlavní paprsek a 4 boční krycí střely vyčistí obrazovku.',
+          costs: { crystals: 1800, diamonds: 30, obsidian: 12 },
+        },
       ],
     },
     {
@@ -109,6 +115,12 @@ export default function UpgradeShop({
           title: 'Gravitační singularita',
           description: 'Těžební černé díry! Přitahuje suroviny z drtivé většiny mapy.',
           costs: { crystals: 1000, diamonds: 25, obsidian: 6 },
+        },
+        {
+          level: 6,
+          title: 'Singularita hyperprostoru',
+          description: 'Absolutní dosah! Veškeré suroviny letí bleskovou rychlostí (+250 %) přímo k lodi.',
+          costs: { crystals: 1800, diamonds: 40, obsidian: 20 },
         },
       ],
     },
@@ -142,6 +154,12 @@ export default function UpgradeShop({
           description: 'Max trup +120 HP. Excelentní absorpce nárazů lodi o 35 %.',
           costs: { crystals: 1200, diamonds: 10, obsidian: 20 },
         },
+        {
+          level: 6,
+          title: 'Neutroniová matrice',
+          description: 'Extrémní konstrukce (+100 HP, celkem 400 HP). Absorbuje neuvěřitelných 50 % veškerého nárazu!',
+          costs: { crystals: 2000, diamonds: 50, obsidian: 25 },
+        },
       ],
     },
     {
@@ -173,6 +191,12 @@ export default function UpgradeShop({
           title: 'Kvantová klenba Aegis',
           description: 'Monstrózní štít (kapacita +40, rychlost samočinného dobíjení +100 %).',
           costs: { crystals: 1100, diamonds: 16, obsidian: 8 },
+        },
+        {
+          level: 5,
+          title: 'Nulový rezonátor singularity',
+          description: 'Bariéra s kapacitou +40 (celkem 190 HP). Obnova štítu se spíná okamžitě (~0.6s od posledního zásahu!).',
+          costs: { crystals: 1600, diamonds: 25, obsidian: 15 },
         },
       ],
     },
@@ -206,6 +230,12 @@ export default function UpgradeShop({
           description: 'Maximální mobilita bez setrvačného omezení (+120 % přetížení výkonu).',
           costs: { crystals: 1000, diamonds: 15, obsidian: 6 },
         },
+        {
+          level: 6,
+          title: 'Tachyonový Warp pohon',
+          description: 'Rychlost letu navýšena o dalších 25 % s nulovým vesmírným třením.',
+          costs: { crystals: 1600, diamonds: 30, obsidian: 15 },
+        },
       ],
     },
   ];
@@ -227,10 +257,11 @@ export default function UpgradeShop({
 
   const currentLaserTypeDescription = () => {
     switch (upgrades.laserLevel) {
-      case 1: return 'Level 1: Standardní jednoduchý laser';
-      case 2: return 'Level 2: Těžký paprsek (2x poškození)';
-      case 3: return 'Level 3: Trojitý rozptylový laser';
-      case 4: return 'Level 4: Prorážející laser (Ultimate)';
+      case 1: return 'Úroveň 1: Standardní jednoduchý laser';
+      case 2: return 'Úroveň 2: Těžký paprsek (2x poškození)';
+      case 3: return 'Úroveň 3: Trojitý rozptylový laser';
+      case 4: return 'Úroveň 4: Prorážející laser (Ultimate)';
+      case 5: return 'Úroveň 5: Kvantová kaskáda (Quintuple)';
       default: return '';
     }
   };

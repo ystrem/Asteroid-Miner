@@ -148,6 +148,8 @@ export default function App() {
 
   const animationFrameId = useRef<number | null>(null);
   const shieldRegenCooldown = useRef<number>(0);
+  const p1ReviveTimerRef = useRef<number>(0);
+  const p2ReviveTimerRef = useRef<number>(0);
 
   // Stable refs for values used inside the high-frequency physics game loop
   const upgradesRef = useRef<Upgrades>(upgrades);
@@ -210,9 +212,9 @@ export default function App() {
 
   // Calculate current HP limits based on upgrades
   useEffect(() => {
-    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel === 5 ? 20 : 0);
+    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
     const calculatedMaxShield = upgrades.shieldLevel > 0 
-      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel === 4 ? 10 : 0)
+      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel >= 4 ? 10 : 0) + (upgrades.shieldLevel >= 5 ? 10 : 0)
       : 0;
 
     maxHullRef.current = calculatedMaxHull;
@@ -493,9 +495,9 @@ export default function App() {
     setRunObsidian(0);
 
     // Calculate initial armor hull strength
-    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel === 5 ? 20 : 0);
+    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
     const calculatedMaxShield = upgrades.shieldLevel > 0 
-      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel === 4 ? 10 : 0)
+      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel >= 4 ? 10 : 0) + (upgrades.shieldLevel >= 5 ? 10 : 0)
       : 0;
 
     // Re-initialize player locations and statuses
@@ -578,7 +580,7 @@ export default function App() {
     saveUpgrades(updatedUpgrades);
     saveStats(updatedStats);
 
-    addGainNotification(`ZAKOUPENO: ${id === 'laserLevel' ? 'Laser Level ' : id === 'magnetLevel' ? 'Magnet Level ' : 'Modul Level '}${nextLevel}`, '#f59e0b');
+    addGainNotification(`ZAKOUPENO: ${id === 'laserLevel' ? 'Úroveň laseru ' : id === 'magnetLevel' ? 'Úroveň magnetu ' : 'Úroveň modulu '}${nextLevel}`, '#f59e0b');
   };
 
   const handleRepair = (cost: number, healAmount: number) => {
@@ -748,8 +750,8 @@ export default function App() {
 
     // Color code laser by player: Player 1 gets classic red/cyan, Player 2 gets purple/rose
     const bulletColor = playerNum === 1 
-      ? (upgradesRef.current.laserLevel === 1 ? '#f87171' : upgradesRef.current.laserLevel === 2 ? '#f43f5e' : upgradesRef.current.laserLevel === 3 ? '#38bdf8' : '#e11d48')
-      : (upgradesRef.current.laserLevel === 1 ? '#c084fc' : upgradesRef.current.laserLevel === 2 ? '#a855f7' : upgradesRef.current.laserLevel === 3 ? '#a855f7' : '#ec4899');
+      ? (upgradesRef.current.laserLevel === 1 ? '#f87171' : upgradesRef.current.laserLevel === 2 ? '#f43f5e' : upgradesRef.current.laserLevel === 3 ? '#38bdf8' : upgradesRef.current.laserLevel === 4 ? '#e11d48' : '#facc15')
+      : (upgradesRef.current.laserLevel === 1 ? '#c084fc' : upgradesRef.current.laserLevel === 2 ? '#a855f7' : upgradesRef.current.laserLevel === 3 ? '#a855f7' : upgradesRef.current.laserLevel === 4 ? '#ec4899' : '#e0f2fe');
 
     if (upgradesRef.current.laserLevel === 1) {
       // Level 1: Simple laser bullet
@@ -817,7 +819,7 @@ export default function App() {
         lasersRef.current.push(laser);
       });
     } 
-    else {
+    else if (upgradesRef.current.laserLevel === 4) {
       // Level 4: Heavy piercing electromagnetic laser beam
       const laser: Laser = {
         id: Math.random().toString(36).substring(2, 9),
@@ -836,6 +838,76 @@ export default function App() {
         maxLifetime: 100,
       };
       lasersRef.current.push(laser);
+    }
+    else {
+      // Level 5: Quantum Cascade (5 lasers!)
+      // 1. Heavy central piercing laser
+      const laserCenter: Laser = {
+        id: Math.random().toString(36).substring(2, 9),
+        x: sx,
+        y: sy,
+        vx: cos * 12.5,
+        vy: sin * 12.5,
+        angle: player.angle,
+        damage: 5,
+        isPiercing: true,
+        piercedAsteroidIds: [],
+        radius: 5,
+        width: 4.5,
+        color: '#facc15', // Gold quantum energy central beam
+        lifetime: 0,
+        maxLifetime: 80,
+      };
+      lasersRef.current.push(laserCenter);
+
+      // 2. Twin angled scatter shots
+      const anglesScatter = [-0.18, 0.18];
+      anglesScatter.forEach(offsetAngle => {
+        const theta = player.angle + offsetAngle;
+        const sCos = Math.cos(theta);
+        const sSin = Math.sin(theta);
+        const laser: Laser = {
+          id: Math.random().toString(36).substring(2, 9),
+          x: player.x + sCos * 22,
+          y: player.y + sSin * 22,
+          vx: sCos * 10,
+          vy: sSin * 10,
+          angle: theta,
+          damage: 2.2,
+          isPiercing: false,
+          piercedAsteroidIds: [],
+          radius: 3,
+          width: 3,
+          color: bulletColor,
+          lifetime: 0,
+          maxLifetime: 60,
+        };
+        lasersRef.current.push(laser);
+      });
+
+      // 3. Twin parallel wing shots
+      const wingsOffset = [-15, 15];
+      wingsOffset.forEach(offsetDist => {
+        const wx = sx - sin * offsetDist;
+        const wy = sy + cos * offsetDist;
+        const laser: Laser = {
+          id: Math.random().toString(36).substring(2, 9),
+          x: wx,
+          y: wy,
+          vx: cos * 11,
+          vy: sin * 11,
+          angle: player.angle,
+          damage: 2.5,
+          isPiercing: false,
+          piercedAsteroidIds: [],
+          radius: 3.5,
+          width: 3.2,
+          color: bulletColor,
+          lifetime: 0,
+          maxLifetime: 75,
+        };
+        lasersRef.current.push(laser);
+      });
     }
   };
 
@@ -879,115 +951,157 @@ export default function App() {
     // --- 1. PLAYER 1 INPUT PROCESS ---
     let handledP1Rotation = false;
 
-    if (gamepad1) {
-      const axisX = gamepad1.axes[0];
-      const axisY = gamepad1.axes[1];
-      
-      // Gamepad intent detection
-      const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18;
-      const isAnyButtonActive = gamepad1.buttons.some(b => b.pressed);
-      if (isAnyAxisActive || isAnyButtonActive) {
-        lastInputDeviceRef.current = 'gamepad';
+    if (p1HullRef.current > 0) {
+      if (gamepad1) {
+        const axisX = gamepad1.axes[0];
+        const axisY = gamepad1.axes[1];
+        
+        // Right stick for direct aiming direction
+        const rX = gamepad1.axes[2] || 0;
+        const rY = gamepad1.axes[3] || 0;
+        const rightStickMagnitude = Math.hypot(rX, rY);
+
+        // Gamepad intent detection
+        const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
+        const isAnyButtonActive = gamepad1.buttons.some(b => b.pressed);
+        if (isAnyAxisActive || isAnyButtonActive) {
+          lastInputDeviceRef.current = 'gamepad';
+        }
+
+        // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
+        if (rightStickMagnitude > 0.22) {
+          const targetAngle = Math.atan2(rY, rX);
+          p1.targetAngle = targetAngle;
+          
+          let deltaAngle = p1.targetAngle - p1.angle;
+          while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+          while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+
+          const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+          p1.angle += deltaAngle * Math.min(1, rotSpeed);
+          handledP1Rotation = true;
+        } else if (Math.abs(axisX) > 0.18) {
+          p1.angle += axisX * 0.075;
+          handledP1Rotation = true;
+        }
+        
+        // Thrust / Reverse
+        p1.thrusting = axisY < -0.18;
+        p1.reversing = axisY > 0.18;
+
+        // Fire
+        const btnFire = gamepad1.buttons[0]?.pressed || gamepad1.buttons[7]?.pressed;
+        if (btnFire) {
+          fireActiveLaser(p1, 1);
+        }
+      } else {
+        // Keyboard input for Player 1
+        p1.thrusting = !!(keysPressed.current['KeyW'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single');
+        p1.reversing = !!keysPressed.current['KeyS'];
+
+        if (keysPressed.current['KeyA']) {
+          p1.angle -= 0.08;
+          handledP1Rotation = true;
+        } else if (keysPressed.current['KeyD']) {
+          p1.angle += 0.08;
+          handledP1Rotation = true;
+        }
+
+        // Fire
+        if (keysPressed.current['Space'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single') {
+          fireActiveLaser(p1, 1);
+        }
       }
 
-      // Rotate ship
-      if (Math.abs(axisX) > 0.18) {
-        p1.angle += axisX * 0.075;
-        handledP1Rotation = true;
-      }
-      
-      // Thrust / Reverse
-      p1.thrusting = axisY < -0.18;
-      p1.reversing = axisY > 0.18;
+      // Single-player mouse-centric fallback steering
+      if (!handledP1Rotation && gameModeRef.current === 'single' && lastInputDeviceRef.current !== 'gamepad') {
+        const mouseAngle = Math.atan2(mousePos.current.y - centerY, mousePos.current.x - centerX);
+        p1.targetAngle = mouseAngle;
 
-      // Fire
-      const btnFire = gamepad1.buttons[0]?.pressed || gamepad1.buttons[7]?.pressed;
-      if (btnFire) {
-        fireActiveLaser(p1, 1);
+        let deltaAngle = p1.targetAngle - p1.angle;
+        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+
+        const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+        p1.angle += deltaAngle * Math.min(1, rotSpeed);
       }
     } else {
-      // Keyboard input for Player 1
-      p1.thrusting = !!(keysPressed.current['KeyW'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single');
-      p1.reversing = !!keysPressed.current['KeyS'];
-
-      if (keysPressed.current['KeyA']) {
-        p1.angle -= 0.08;
-        handledP1Rotation = true;
-      } else if (keysPressed.current['KeyD']) {
-        p1.angle += 0.08;
-        handledP1Rotation = true;
-      }
-
-      // Fire
-      if (keysPressed.current['Space'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single') {
-        fireActiveLaser(p1, 1);
-      }
-    }
-
-    // Single-player mouse-centric fallback steering
-    if (!handledP1Rotation && gameModeRef.current === 'single' && lastInputDeviceRef.current !== 'gamepad') {
-      const mouseAngle = Math.atan2(mousePos.current.y - centerY, mousePos.current.x - centerX);
-      p1.targetAngle = mouseAngle;
-
-      let deltaAngle = p1.targetAngle - p1.angle;
-      while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-      while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-
-      const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-      p1.angle += deltaAngle * Math.min(1, rotSpeed);
+      p1.thrusting = false;
+      p1.reversing = false;
     }
 
     // --- 2. PLAYER 2 INPUT PROCESS (COOP MODE ONLY) ---
     if (gameModeRef.current === 'coop') {
       let handledP2Rotation = false;
 
-      if (gamepad2) {
-        const axisX = gamepad2.axes[0];
-        const axisY = gamepad2.axes[1];
-        
-        // Gamepad intent detection
-        const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18;
-        const isAnyButtonActive = gamepad2.buttons.some(b => b.pressed);
-        if (isAnyAxisActive || isAnyButtonActive) {
-          lastInputDeviceRef.current = 'gamepad';
-        }
+      if (p2HullRef.current > 0) {
+        if (gamepad2) {
+          const axisX = gamepad2.axes[0];
+          const axisY = gamepad2.axes[1];
 
-        // Rotate ship
-        if (Math.abs(axisX) > 0.18) {
-          p2.angle += axisX * 0.075;
-          handledP2Rotation = true;
-        }
-        
-        // Thrust / Reverse
-        p2.thrusting = axisY < -0.18;
-        p2.reversing = axisY > 0.18;
+          // Right stick for direct aiming direction
+          const rX = gamepad2.axes[2] || 0;
+          const rY = gamepad2.axes[3] || 0;
+          const rightStickMagnitude = Math.hypot(rX, rY);
+          
+          // Gamepad intent detection
+          const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
+          const isAnyButtonActive = gamepad2.buttons.some(b => b.pressed);
+          if (isAnyAxisActive || isAnyButtonActive) {
+            lastInputDeviceRef.current = 'gamepad';
+          }
 
-        // Fire
-        const btnFire = gamepad2.buttons[0]?.pressed || gamepad2.buttons[7]?.pressed;
-        if (btnFire) {
-          fireActiveLaser(p2, 2);
+          // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
+          if (rightStickMagnitude > 0.22) {
+            const targetAngle = Math.atan2(rY, rX);
+            p2.targetAngle = targetAngle;
+            
+            let deltaAngle = p2.targetAngle - p2.angle;
+            while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+            while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+
+            const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+            p2.angle += deltaAngle * Math.min(1, rotSpeed);
+            handledP2Rotation = true;
+          } else if (Math.abs(axisX) > 0.18) {
+            p2.angle += axisX * 0.075;
+            handledP2Rotation = true;
+          }
+          
+          // Thrust / Reverse
+          p2.thrusting = axisY < -0.18;
+          p2.reversing = axisY > 0.18;
+
+          // Fire
+          const btnFire = gamepad2.buttons[0]?.pressed || gamepad2.buttons[7]?.pressed;
+          if (btnFire) {
+            fireActiveLaser(p2, 2);
+          }
+        } else {
+          // Keyboard inputs for Player 2
+          p2.thrusting = !!(keysPressed.current['ArrowUp'] || keysPressed.current['KeyI']);
+          p2.reversing = !!(keysPressed.current['ArrowDown'] || keysPressed.current['KeyK']);
+
+          if (keysPressed.current['ArrowLeft'] || keysPressed.current['KeyJ']) {
+            p2.angle -= 0.08;
+            handledP2Rotation = true;
+          } else if (keysPressed.current['ArrowRight'] || keysPressed.current['KeyL']) {
+            p2.angle += 0.08;
+            handledP2Rotation = true;
+          }
+
+          // Fire
+          if (
+            keysPressed.current['Enter'] || 
+            keysPressed.current['ShiftRight'] || 
+            keysPressed.current['KeyO']
+          ) {
+            fireActiveLaser(p2, 2);
+          }
         }
       } else {
-        // Keyboard inputs for Player 2
-        p2.thrusting = !!(keysPressed.current['ArrowUp'] || keysPressed.current['KeyI']);
-        p2.reversing = !!(keysPressed.current['ArrowDown'] || keysPressed.current['KeyK']);
-
-        if (keysPressed.current['ArrowLeft'] || keysPressed.current['KeyJ']) {
-          p2.angle -= 0.08;
-          handledP2Rotation = true;
-        } else if (keysPressed.current['ArrowRight'] || keysPressed.current['KeyL']) {
-          p2.angle += 0.08;
-          handledP2Rotation = true;
-        }
-
-        // Fire
-        if (
-          keysPressed.current['Enter'] || 
-          keysPressed.current['ShiftRight'] || 
-          keysPressed.current['KeyO']
-        ) {
-          fireActiveLaser(p2, 2);
-        }
+        p2.thrusting = false;
+        p2.reversing = false;
       }
     }
 
@@ -1077,6 +1191,101 @@ export default function App() {
       }
     }
 
+    // --- COOP MODE REVIVAL PROCESS ---
+    if (gameModeRef.current === 'coop') {
+      const p1 = p1Ref.current;
+      const p2 = p2Ref.current;
+      const dx = p1.x - p2.x;
+      const dy = p1.y - p2.y;
+      const dist = Math.hypot(dx, dy);
+
+      // Player 2 reviving Player 1
+      if (p1HullRef.current <= 0 && p2HullRef.current > 0) {
+        if (dist < 90) {
+          p1ReviveTimerRef.current += 1;
+          if (p1ReviveTimerRef.current >= 150) { // 2.5 seconds at 60fps
+            const p1MaxHull = 100 + (upgradesRef.current.hullLevel - 1) * 50 + (upgradesRef.current.hullLevel >= 5 ? 20 : 0) + (upgradesRef.current.hullLevel >= 6 ? 30 : 0);
+            const revivedHP = Math.round(p1MaxHull * 0.4);
+            
+            p1HullRef.current = revivedHP;
+            setHull(revivedHP);
+            p1.invulnerableTime = 120; // 2 seconds invulnerability
+            p1ReviveTimerRef.current = 0;
+            
+            p1.vx = 0;
+            p1.vy = 0;
+            p1.angle = -Math.PI / 2;
+            
+            addGainNotification('🚀 HRÁČ 1 OŽIVEN S 40% TRUPEM!', '#22c55e');
+
+            // Beautiful green burst particles
+            for (let angle = 0; angle < Math.PI * 2; angle += 0.22) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p1.x,
+                y: p1.y,
+                vx: Math.cos(angle) * (Math.random() * 4 + 3),
+                vy: Math.sin(angle) * (Math.random() * 4 + 3),
+                color: '#22c55e',
+                size: Math.random() * 4.5 + 2.5,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 35,
+              });
+            }
+          }
+        } else {
+          // Slowly decay progress if not near
+          p1ReviveTimerRef.current = Math.max(0, p1ReviveTimerRef.current - 1.5);
+        }
+      } else {
+        p1ReviveTimerRef.current = 0;
+      }
+
+      // Player 1 reviving Player 2
+      if (p2HullRef.current <= 0 && p1HullRef.current > 0) {
+        if (dist < 90) {
+          p2ReviveTimerRef.current += 1;
+          if (p2ReviveTimerRef.current >= 150) { // 2.5 seconds at 60fps
+            const p2MaxHull = 100 + (upgradesRef.current.hullLevel - 1) * 50 + (upgradesRef.current.hullLevel >= 5 ? 20 : 0) + (upgradesRef.current.hullLevel >= 6 ? 30 : 0);
+            const revivedHP = Math.round(p2MaxHull * 0.4);
+            
+            p2HullRef.current = revivedHP;
+            setP2Hull(revivedHP);
+            p2.invulnerableTime = 120; // 2 seconds invulnerability
+            p2ReviveTimerRef.current = 0;
+            
+            p2.vx = 0;
+            p2.vy = 0;
+            p2.angle = -Math.PI / 2;
+
+            addGainNotification('🛸 HRÁČ 2 OŽIVEN S 40% TRUPEM!', '#a855f7');
+
+            // Beautiful purple burst particles
+            for (let angle = 0; angle < Math.PI * 2; angle += 0.22) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p2.x,
+                y: p2.y,
+                vx: Math.cos(angle) * (Math.random() * 4 + 3),
+                vy: Math.sin(angle) * (Math.random() * 4 + 3),
+                color: '#a855f7',
+                size: Math.random() * 4.5 + 2.5,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 35,
+              });
+            }
+          }
+        } else {
+          // Slowly decay progress if not near
+          p2ReviveTimerRef.current = Math.max(0, p2ReviveTimerRef.current - 1.5);
+        }
+      } else {
+        p2ReviveTimerRef.current = 0;
+      }
+    }
+
     // --- 5. SHIELD PASSIVE RECHARGE LOOPS ---
     // Player 1 Shield regen
     if (p1HullRef.current > 0 && upgradesRef.current.shieldLevel > 0 && p1ShieldRef.current < maxShieldRef.current) {
@@ -1122,6 +1331,7 @@ export default function App() {
     else if (upgradesRef.current.magnetLevel === 3) { magnetRadius = 260; magnetPullStrength = 0.36; }
     else if (upgradesRef.current.magnetLevel === 4) { magnetRadius = 340; magnetPullStrength = 0.44; }
     else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; }
+    else if (upgradesRef.current.magnetLevel >= 6) { magnetRadius = 8000; magnetPullStrength = 1.95; }
 
     oresRef.current = oresRef.current.map(ore => {
       // Find nearest active player as gravity center
@@ -1347,7 +1557,7 @@ export default function App() {
             return nextShield;
           });
 
-          shieldRegenCooldown.current = 240;
+          shieldRegenCooldown.current = upgradesRef.current.shieldLevel >= 5 ? 38 : 240;
         }
       });
     }
@@ -1861,12 +2071,21 @@ export default function App() {
         ctx.moveTo(-2, -10); ctx.lineTo(14, -10);
         ctx.moveTo(6, 0); ctx.lineTo(19, 0);
         ctx.moveTo(-2, 10); ctx.lineTo(14, 10);
-      } else {
+      } else if (upgradesRef.current.laserLevel === 4) {
         ctx.strokeStyle = playerNum === 1 ? '#c084fc' : '#ec4899';
         ctx.moveTo(-5, -6); ctx.lineTo(18, -4);
         ctx.moveTo(-5, 6); ctx.lineTo(18, 4);
         ctx.moveTo(5, -2); ctx.lineTo(21, 0);
         ctx.moveTo(5, 2); ctx.lineTo(21, 0);
+      } else {
+        // Level 5 Gold Quantum barrels!
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 2.5;
+        ctx.moveTo(-5, -12); ctx.lineTo(14, -10);
+        ctx.moveTo(-5, 12); ctx.lineTo(14, 10);
+        ctx.moveTo(-1, -6); ctx.lineTo(18, -4);
+        ctx.moveTo(-1, 6); ctx.lineTo(18, 4);
+        ctx.moveTo(8, 0); ctx.lineTo(24, 0);
       }
       ctx.stroke();
 
@@ -1892,8 +2111,90 @@ export default function App() {
       ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
       ctx.font = '9px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(`Player ${playerNum}`, 0, -p.radius - 12);
+      ctx.fillText(`Hráč ${playerNum}`, 0, -p.radius - 12);
       ctx.restore();
+
+      ctx.restore();
+    };
+
+    const drawPlayerShipWrecked = (p: any, playerNum: 1 | 2, reviveProgress: number) => {
+      const sx = p.x - camX;
+      const sy = p.y - camY;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(p.angle);
+
+      // Downed ship transparency
+      ctx.globalAlpha = 0.45;
+
+      // Dark gray color scheme representing a silent, damaged ship
+      ctx.fillStyle = '#334155'; // slate-700
+      ctx.strokeStyle = '#475569'; // slate-600
+      ctx.lineWidth = 2.0;
+
+      ctx.beginPath();
+      ctx.moveTo(22, 0);
+      ctx.lineTo(-10, -16);
+      ctx.lineTo(-18, -12);
+      ctx.lineTo(-14, -5);
+      ctx.lineTo(-14, 5);
+      ctx.lineTo(-18, 12);
+      ctx.lineTo(-10, 16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Damaged cockpit
+      ctx.fillStyle = '#1e293b'; 
+      ctx.beginPath();
+      ctx.moveTo(10, 0);
+      ctx.lineTo(0, -5);
+      ctx.lineTo(-6, -3);
+      ctx.lineTo(-6, 3);
+      ctx.lineTo(0, 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+
+      // Standalone overlay graphics on top of the ship (independent of ship facing rotation)
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      // Pulsative scale oscillation
+      const pulse = 1.0 + Math.sin(Date.now() * 0.009) * 0.15;
+
+      // Beacon ring
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, p.radius * 1.5 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // S.O.S label text
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('S.O.S.', 0, -p.radius - 12);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '9px monospace';
+      ctx.fillText('PŘILEŤ PRO OŽIVENÍ', 0, p.radius + 18);
+
+      // Revival Circle Ring
+      if (reviveProgress > 0) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        // Ring progresses from top
+        ctx.arc(0, 0, p.radius + 8, -Math.PI / 2, -Math.PI / 2 + (reviveProgress / 150) * Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#22c55e';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText(`${Math.round((reviveProgress / 150) * 100)}%`, 0, -p.radius - 24);
+      }
 
       ctx.restore();
     };
@@ -1901,11 +2202,17 @@ export default function App() {
     // Render P1
     if (p1HullRef.current > 0) {
       drawPlayerShip(p1, 1, p1HullRef.current, shield, maxShieldRef.current);
+    } else if (gameModeRef.current === 'coop') {
+      drawPlayerShipWrecked(p1, 1, p1ReviveTimerRef.current);
     }
 
     // Render P2
-    if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
-      drawPlayerShip(p2, 2, p2HullRef.current, p2ShieldRef.current, p2MaxShieldRef.current);
+    if (gameModeRef.current === 'coop') {
+      if (p2HullRef.current > 0) {
+        drawPlayerShip(p2, 2, p2HullRef.current, p2ShieldRef.current, p2MaxShieldRef.current);
+      } else {
+        drawPlayerShipWrecked(p2, 2, p2ReviveTimerRef.current);
+      }
     }
 
     // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE (SUBTLY DRAW RANGE IN SCREEN CARD) ---
@@ -1915,6 +2222,7 @@ export default function App() {
       else if (upgradesRef.current.magnetLevel === 3) drawMagnetRadius = 260;
       else if (upgradesRef.current.magnetLevel === 4) drawMagnetRadius = 340;
       else if (upgradesRef.current.magnetLevel === 5) drawMagnetRadius = 1200;
+      else if (upgradesRef.current.magnetLevel >= 6) drawMagnetRadius = 8000;
 
       ctx.save();
       ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
