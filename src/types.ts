@@ -100,3 +100,29 @@ export interface PlayerStats {
   highScore: number;
   totalAsteroidsMined: number;
 }
+
+export interface Player {
+  playerNum: number;
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  targetAngle: number;
+  thrusting: boolean;
+  reversing: boolean;
+  radius: number;
+  invulnerableTime: number;
+  lastFired: number;
+  hull: number;
+  maxHull: number;
+  shield: number;
+  maxShield: number;
+  reviveTimer: number;
+  color: string;
+  glowColor: string;
+  name: string;
+  inputSource: 'keyboard_p1' | 'keyboard_p2' | 'gamepad';
+  gamepadIndex: number | null;
+}

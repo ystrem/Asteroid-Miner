@@ -14,7 +14,8 @@ import {
   Upgrades, 
   PlayerStats,
   AsteroidSize,
-  OreType 
+  OreType,
+  Player
 } from './types';
 import { 
   playLaserSound, 
@@ -108,34 +109,13 @@ export default function App() {
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
-  // Game entities - Separate Player 1 and Player 2 reference objects
-  const p1Ref = useRef({
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    angle: -Math.PI / 2, // In radians
-    targetAngle: -Math.PI / 2,
-    thrusting: false,
-    reversing: false,
-    radius: 20,
-    invulnerableTime: 0,
-    lastFired: 0,
-  });
+  // Game entities - Multiple dynamic players support with drop-in/drop-out
+  const playersRef = useRef<Player[]>([]);
+  const [activePlayers, setActivePlayers] = useState<Player[]>([]);
 
-  const p2Ref = useRef({
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    angle: -Math.PI / 2, // In radians
-    targetAngle: -Math.PI / 2,
-    thrusting: false,
-    reversing: false,
-    radius: 20,
-    invulnerableTime: 0,
-    lastFired: 0,
-  });
+  // Smooth camera track positions
+  const lastCamXRef = useRef<number>(0);
+  const lastCamYRef = useRef<number>(0);
 
   const asteroidsRef = useRef<Asteroid[]>([]);
   const lasersRef = useRef<Laser[]>([]);
@@ -171,18 +151,30 @@ export default function App() {
   const superMagnetCooldownRef = useRef<number>(0);
   const superMagnetActiveRef = useRef<number>(0);
 
-  const p2MaxHullRef = useRef<number>(100);
-  const p2MaxShieldRef = useRef<number>(0);
-
-  const p1HullRef = useRef<number>(100);
-  const p1ShieldRef = useRef<number>(0);
-  const p2HullRef = useRef<number>(100);
-  const p2ShieldRef = useRef<number>(0);
   const gameModeRef = useRef<'single' | 'coop'>('single');
 
   // Synchronize state values to refs inside effect
   useEffect(() => {
     upgradesRef.current = upgrades;
+
+    // Apply limits dynamically to all active player ships
+    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
+    const calculatedMaxShield = upgrades.shieldLevel > 0 
+      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel >= 4 ? 10 : 0) + (upgrades.shieldLevel >= 5 ? 10 : 0)
+      : 0;
+
+    maxHullRef.current = calculatedMaxHull;
+    maxShieldRef.current = calculatedMaxShield;
+    setMaxHull(calculatedMaxHull);
+    setMaxShield(calculatedMaxShield);
+
+    playersRef.current.forEach(p => {
+      p.maxHull = calculatedMaxHull;
+      p.maxShield = calculatedMaxShield;
+      p.hull = Math.min(calculatedMaxHull, p.hull);
+      p.shield = Math.min(calculatedMaxShield, p.shield);
+    });
+    setActivePlayers([...playersRef.current]);
   }, [upgrades]);
 
   useEffect(() => {
@@ -197,60 +189,8 @@ export default function App() {
   }, [isShopOpen]);
 
   useEffect(() => {
-    p1HullRef.current = hull;
-  }, [hull]);
-
-  useEffect(() => {
-    p1ShieldRef.current = shield;
-  }, [shield]);
-
-  useEffect(() => {
-    p2HullRef.current = p2Hull;
-  }, [p2Hull]);
-
-  useEffect(() => {
-    p2ShieldRef.current = p2Shield;
-  }, [p2Shield]);
-
-  useEffect(() => {
     gameModeRef.current = gameMode;
   }, [gameMode]);
-
-  // Clean up game loop on component unmount
-  useEffect(() => {
-    return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
-      }
-    };
-  }, []);
-
-  // Calculate current HP limits based on upgrades
-  useEffect(() => {
-    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
-    const calculatedMaxShield = upgrades.shieldLevel > 0 
-      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel >= 4 ? 10 : 0) + (upgrades.shieldLevel >= 5 ? 10 : 0)
-      : 0;
-
-    maxHullRef.current = calculatedMaxHull;
-    maxShieldRef.current = calculatedMaxShield;
-
-    setMaxHull(calculatedMaxHull);
-    setMaxShield(calculatedMaxShield);
-
-    // If starting or upgrading, make sure HP doesn't exceed maximums
-    setHull(curr => Math.min(curr, calculatedMaxHull));
-    setShield(curr => Math.min(curr, calculatedMaxShield));
-
-    // Player 2 Limits
-    p2MaxHullRef.current = calculatedMaxHull;
-    p2MaxShieldRef.current = calculatedMaxShield;
-    setP2MaxHull(calculatedMaxHull);
-    setP2MaxShield(calculatedMaxShield);
-
-    setP2Hull(curr => Math.min(curr, calculatedMaxHull));
-    setP2Shield(curr => Math.min(curr, calculatedMaxShield));
-  }, [upgrades]);
 
   // Load HighScore
   useEffect(() => {
@@ -270,6 +210,101 @@ export default function App() {
     }, 1500);
   };
 
+  // --- DYNAMIC JOIN AND LEAVE HANDLERS (DROP-IN / DROP-OUT) ---
+  const joinPlayer = (source: 'keyboard_p1' | 'keyboard_p2' | 'gamepad', gamepadIdx: number | null = null) => {
+    // Check if configuration already active
+    const exists = playersRef.current.some(p => p.inputSource === source && (source !== 'gamepad' || p.gamepadIndex === gamepadIdx));
+    if (exists) return;
+
+    if (playersRef.current.length >= 4) {
+      addGainNotification('Mise plná: Max 4 těžaři!', '#ef4444');
+      return;
+    }
+
+    const playerNum = playersRef.current.length > 0 
+      ? Math.max(...playersRef.current.map(p => p.playerNum)) + 1 
+      : 1;
+
+    let pColor = '#22d3ee'; // standard cyan (P1)
+    let pGlow = '#60a5fa';
+    let pName = `Hráč ${playerNum}`;
+
+    if (source === 'keyboard_p1') {
+      pColor = '#22d3ee';
+      pGlow = '#60a5fa';
+      pName = 'Hráč 1 (P_Aktivní)';
+    } else if (source === 'keyboard_p2') {
+      pColor = '#c084fc';
+      pGlow = '#a855f7';
+      pName = 'Hráč 2 (P_WASD)';
+    } else if (source === 'gamepad') {
+      const idx = gamepadIdx || 0;
+      if (idx === 0) {
+        pColor = '#fb923c'; // Orange
+        pGlow = '#f97316';
+        pName = `Hráč ${playerNum} (Ovladač 1)`;
+      } else {
+        pColor = '#4ade80'; // Emerald
+        pGlow = '#22c55e';
+        pName = `Hráč ${playerNum} (Ovladač ${idx + 1})`;
+      }
+    }
+
+    const calculatedMaxHull = 100 + (upgradesRef.current.hullLevel - 1) * 50 + (upgradesRef.current.hullLevel >= 5 ? 20 : 0) + (upgradesRef.current.hullLevel >= 6 ? 30 : 0);
+    const calculatedMaxShield = upgradesRef.current.shieldLevel > 0 
+      ? 50 + (upgradesRef.current.shieldLevel - 1) * 30 + (upgradesRef.current.shieldLevel >= 4 ? 10 : 0) + (upgradesRef.current.shieldLevel >= 5 ? 10 : 0)
+      : 0;
+
+    // Anchor position based on any already active player or canvas center
+    const anchor = playersRef.current[0];
+    const spawnX = anchor ? anchor.x + (Math.random() * 100 - 50) : 0;
+    const spawnY = anchor ? anchor.y + (Math.random() * 100 - 50) : 0;
+
+    const newPlayer: Player = {
+      playerNum,
+      id: `${source}_${gamepadIdx !== null ? gamepadIdx : ''}`,
+      x: spawnX,
+      y: spawnY,
+      vx: 0,
+      vy: 0,
+      angle: -Math.PI / 2,
+      targetAngle: -Math.PI / 2,
+      thrusting: false,
+      reversing: false,
+      radius: 20,
+      invulnerableTime: 120,
+      lastFired: 0,
+      hull: calculatedMaxHull,
+      maxHull: calculatedMaxHull,
+      shield: calculatedMaxShield,
+      maxShield: calculatedMaxShield,
+      reviveTimer: 0,
+      color: pColor,
+      glowColor: pGlow,
+      name: pName,
+      inputSource: source,
+      gamepadIndex: gamepadIdx
+    };
+
+    playersRef.current.push(newPlayer);
+    setActivePlayers([...playersRef.current]);
+    addGainNotification(`🚀 ${pName} SE PŘIPOJIL K TĚŽBĚ!`, pColor);
+  };
+
+  const leavePlayer = (id: string) => {
+    const player = playersRef.current.find(p => p.id === id);
+    if (!player) return;
+
+    if (playersRef.current.length <= 1) {
+      addGainNotification('Mise vyžaduje aspoň jednoho aktivního těžaře!', '#ef4444');
+      return;
+    }
+
+    playersRef.current = playersRef.current.filter(p => p.id !== id);
+    setActivePlayers([...playersRef.current]);
+    addGainNotification(`🔌 ${player.name} SE ODPOJIL`, '#94a3b8');
+  };
+
   // --- KEYBOARD & GAMEPAD EVENT HANDLERS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -278,17 +313,49 @@ export default function App() {
       lastInputDeviceRef.current = 'keyboard';
 
       if (isPlaying && !isShopOpen) {
-        if (code === 'KeyQ') {
-          triggerChainLightning(1);
-        } else if (code === 'KeyE') {
-          triggerPulseWaveRing(1);
-        } else if (code === 'KeyR') {
-          triggerSuperMagnetVacuum(1);
+        // Dynamic drop-in detection for Player 1 (Keyboard Arrows)
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlRight', 'Digit7', 'Digit8', 'Digit9'].includes(code)) {
+          const hasP1 = playersRef.current.some(p => p.inputSource === 'keyboard_p1');
+          if (!hasP1) {
+            joinPlayer('keyboard_p1');
+          }
+        }
+
+        // Dynamic drop-in detection for Player 2 (Keyboard WASD)
+        if (['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ControlLeft', 'Digit1', 'Digit2', 'Digit3'].includes(code)) {
+          const hasP2 = playersRef.current.some(p => p.inputSource === 'keyboard_p2');
+          if (!hasP2) {
+            joinPlayer('keyboard_p2');
+          }
+        }
+
+        // Ability bindings based on player associations
+        if (code === 'KeyQ' || code === 'Digit9' || code === 'Numpad9') {
+          const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+          if (p1) triggerChainLightning(p1.playerNum);
+        } else if (code === 'KeyE' || code === 'Digit8' || code === 'Numpad8') {
+          const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+          if (p1) triggerPulseWaveRing(p1.playerNum);
+        } else if (code === 'KeyR' || code === 'Digit7' || code === 'Numpad7') {
+          const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+          if (p1) triggerSuperMagnetVacuum(p1.playerNum);
+        }
+
+        // Player 2 abilities mapping (Numbers 1, 2, 3)
+        if (code === 'Digit1' || code === 'Numpad1') {
+          const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+          if (p2) triggerChainLightning(p2.playerNum);
+        } else if (code === 'Digit2' || code === 'Numpad2') {
+          const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+          if (p2) triggerPulseWaveRing(p2.playerNum);
+        } else if (code === 'Digit3' || code === 'Numpad3') {
+          const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+          if (p2) triggerSuperMagnetVacuum(p2.playerNum);
         }
       }
 
-      // Prevent window scrolling with Arrow keys or Spacebar
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code) && isPlaying && !isShopOpen) {
+      // Prevent window scrolling with Arrow keys, WASD, or Spacebar
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD'].includes(code) && isPlaying && !isShopOpen) {
         e.preventDefault();
       }
     };
@@ -396,8 +463,13 @@ export default function App() {
     customVy?: number,
     forcedType?: 'common' | 'magma' | 'ice' | 'crystal'
   ): Asteroid => {
-    let px = p1Ref.current.x;
-    let py = p1Ref.current.y;
+    let px = 0;
+    let py = 0;
+    const anchorPlayer = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
+    if (anchorPlayer) {
+      px = anchorPlayer.x;
+      py = anchorPlayer.y;
+    }
 
     let x = 0;
     let y = 0;
@@ -545,15 +617,19 @@ export default function App() {
     setRunDiamonds(0);
     setRunObsidian(0);
 
-    // Calculate initial armor hull strength
+    // Calculate initial armor hull strength and shields limits based on current run upgrades
     const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
     const calculatedMaxShield = upgrades.shieldLevel > 0 
-      ? 50 + (upgrades.shieldLevel - 1) * 30 + (upgrades.shieldLevel >= 4 ? 10 : 0) + (upgrades.shieldLevel >= 5 ? 10 : 0)
+      ? 100 + (upgrades.shieldLevel - 1) * 35 
       : 0;
 
     // Re-initialize player locations and statuses
-    p1Ref.current = {
-      x: gameMode === 'coop' ? -55 : 0,
+    playersRef.current = [];
+
+    const p1: Player = {
+      playerNum: 1,
+      id: 'keyboard_p1_',
+      x: gameMode === 'coop' ? -60 : 0,
       y: 0,
       vx: 0,
       vy: 0,
@@ -562,18 +638,26 @@ export default function App() {
       thrusting: false,
       reversing: false,
       radius: 20,
-      invulnerableTime: 60, // briefly invulnerable on start
+      invulnerableTime: 60,
       lastFired: 0,
+      hull: calculatedMaxHull,
+      maxHull: calculatedMaxHull,
+      shield: calculatedMaxShield,
+      maxShield: calculatedMaxShield,
+      reviveTimer: 0,
+      color: '#22d3ee', // Cyan
+      glowColor: '#60a5fa',
+      name: 'Hráč 1 (P_Aktivní)',
+      inputSource: 'keyboard_p1',
+      gamepadIndex: null
     };
-
-    setHull(calculatedMaxHull);
-    setShield(calculatedMaxShield);
-    p1HullRef.current = calculatedMaxHull;
-    p1ShieldRef.current = calculatedMaxShield;
+    playersRef.current.push(p1);
 
     if (gameMode === 'coop') {
-      p2Ref.current = {
-        x: 55,
+      const p2: Player = {
+        playerNum: 2,
+        id: 'keyboard_p2_',
+        x: 60,
         y: 0,
         vx: 0,
         vy: 0,
@@ -582,20 +666,23 @@ export default function App() {
         thrusting: false,
         reversing: false,
         radius: 20,
-        invulnerableTime: 60, // briefly invulnerable on start
+        invulnerableTime: 60,
         lastFired: 0,
+        hull: calculatedMaxHull,
+        maxHull: calculatedMaxHull,
+        shield: calculatedMaxShield,
+        maxShield: calculatedMaxShield,
+        reviveTimer: 0,
+        color: '#c084fc', // Purple
+        glowColor: '#a855f7',
+        name: 'Hráč 2 (P_WASD)',
+        inputSource: 'keyboard_p2',
+        gamepadIndex: null
       };
-      setP2Hull(calculatedMaxHull);
-      setP2Shield(calculatedMaxShield);
-      p2HullRef.current = calculatedMaxHull;
-      p2ShieldRef.current = calculatedMaxShield;
-    } else {
-      // Deactivate P2
-      setP2Hull(0);
-      setP2Shield(0);
-      p2HullRef.current = 0;
-      p2ShieldRef.current = 0;
+      playersRef.current.push(p2);
     }
+
+    setActivePlayers([...playersRef.current]);
 
     // Initial entities clear
     asteroidsRef.current = [];
@@ -770,7 +857,7 @@ export default function App() {
   };
 
   // --- LASER BULLET EMISSION INTER ACTION ---
-  const fireActiveLaser = (player: typeof p1Ref.current, playerNum: 1 | 2) => {
+  const fireActiveLaser = (player: Player, playerNum: number) => {
     const now = Date.now();
     
     // Fire rates depend on weapon tier
@@ -799,10 +886,8 @@ export default function App() {
     const baseVx = cos * speed;
     const baseVy = sin * speed;
 
-    // Color code laser by player: Player 1 gets classic red/cyan, Player 2 gets purple/rose
-    const bulletColor = playerNum === 1 
-      ? (upgradesRef.current.laserLevel === 1 ? '#f87171' : upgradesRef.current.laserLevel === 2 ? '#f43f5e' : upgradesRef.current.laserLevel === 3 ? '#38bdf8' : upgradesRef.current.laserLevel === 4 ? '#e11d48' : '#facc15')
-      : (upgradesRef.current.laserLevel === 1 ? '#c084fc' : upgradesRef.current.laserLevel === 2 ? '#a855f7' : upgradesRef.current.laserLevel === 3 ? '#a855f7' : upgradesRef.current.laserLevel === 4 ? '#ec4899' : '#e0f2fe');
+    // Use player-assigned color as core bullet color, adapting hues beautifully!
+    const bulletColor = player.color;
 
     if (upgradesRef.current.laserLevel === 1) {
       // Level 1: Simple laser bullet
@@ -974,305 +1059,165 @@ export default function App() {
       return;
     }
 
-    const p1 = p1Ref.current;
-    const p2 = p2Ref.current;
-
     const canvas = canvasRef.current;
     const width = canvas ? canvas.width : window.innerWidth;
     const height = canvas ? canvas.height : window.innerHeight;
-    const centerX = width / 2;
-    const centerY = height / 2;
 
     // --- READ ACTIVE GAMEPAD DEVICES ---
     const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
-    let gamepad1 = null;
-    let gamepad2 = null;
-    let foundCount = 0;
+
+    // Check connected gamepads to see if any button is pressed — if so, drop them in!
     for (let i = 0; i < gamepads.length; i++) {
-      if (gamepads[i]) {
-        if (foundCount === 0) {
-          gamepad1 = gamepads[i];
-          foundCount++;
-        } else if (foundCount === 1) {
-          gamepad2 = gamepads[i];
-          foundCount++;
+      const gp = gamepads[i];
+      if (gp) {
+        const anyButtonPressed = gp.buttons.some(b => b.pressed);
+        if (anyButtonPressed) {
+          const alreadyJoined = playersRef.current.some(pl => pl.inputSource === 'gamepad' && pl.gamepadIndex === i);
+          if (!alreadyJoined) {
+            joinPlayer('gamepad', i);
+          }
         }
       }
     }
 
     let isAnyLTPressed = false;
 
-    // --- 1. PLAYER 1 INPUT PROCESS ---
-    let handledP1Rotation = false;
+    // --- PROCESS INPUT FOR ALL ACTIVE PLAYERS ---
+    playersRef.current.forEach(p => {
+      p.thrusting = false;
+      p.reversing = false;
 
-    if (p1HullRef.current > 0) {
-      if (gamepad1) {
-        const axisX = gamepad1.axes[0];
-        const axisY = gamepad1.axes[1];
-        
-        // Right stick for direct aiming direction
-        const rX = gamepad1.axes[2] || 0;
-        const rY = gamepad1.axes[3] || 0;
-        const rightStickMagnitude = Math.hypot(rX, rY);
+      if (p.hull > 0) {
+        if (p.inputSource === 'keyboard_p1') {
+          p.thrusting = !!keysPressed.current['ArrowUp'];
+          p.reversing = !!keysPressed.current['ArrowDown'];
 
-        // Check if LT (Left Trigger, button 6) is pressed
-        const isLTPressed = gamepad1.buttons[6]?.pressed || (gamepad1.buttons[6]?.value || 0) > 0.15;
-        if (isLTPressed) {
-          isAnyLTPressed = true;
-        }
+          if (keysPressed.current['ArrowLeft']) {
+            p.angle -= 0.08;
+          } else if (keysPressed.current['ArrowRight']) {
+            p.angle += 0.08;
+          }
 
-        // Gamepad intent detection
-        const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
-        const isAnyButtonActive = gamepad1.buttons.some(b => b.pressed);
-        if (isAnyAxisActive || isAnyButtonActive || isLTPressed) {
-          lastInputDeviceRef.current = 'gamepad';
-        }
+          if (keysPressed.current['ControlRight'] || keysPressed.current['Space']) {
+            fireActiveLaser(p, p.playerNum);
+          }
+        } 
+        else if (p.inputSource === 'keyboard_p2') {
+          p.thrusting = !!keysPressed.current['KeyW'];
+          p.reversing = !!keysPressed.current['KeyS'];
 
-        // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
-        // If LT is pressed, disable rotation completely ('a vůbec se to neotacelo')
-        if (isLTPressed) {
-          handledP1Rotation = true;
-        } else if (rightStickMagnitude > 0.22) {
-          const targetAngle = Math.atan2(rY, rX);
-          p1.targetAngle = targetAngle;
-          
-          let deltaAngle = p1.targetAngle - p1.angle;
-          while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-          while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+          if (keysPressed.current['KeyA']) {
+            p.angle -= 0.08;
+          } else if (keysPressed.current['KeyD']) {
+            p.angle += 0.08;
+          }
 
-          const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-          p1.angle += deltaAngle * Math.min(1, rotSpeed);
-          handledP1Rotation = true;
-        } else if (Math.abs(axisX) > 0.18) {
-          p1.angle += axisX * 0.075;
-          handledP1Rotation = true;
-        }
-        
-        // Thrust / Reverse
-        if (isLTPressed) {
-          p1.thrusting = true;
-          p1.reversing = false;
-        } else {
-          p1.thrusting = axisY < -0.18;
-          p1.reversing = axisY > 0.18;
-        }
+          if (keysPressed.current['ControlLeft']) {
+            fireActiveLaser(p, p.playerNum);
+          }
+        } 
+        else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
+          const gp = gamepads[p.gamepadIndex];
+          if (gp) {
+            const axisX = gp.axes[0];
+            const axisY = gp.axes[1];
+            const rX = gp.axes[2] || 0;
+            const rY = gp.axes[3] || 0;
+            const rightStickMagnitude = Math.hypot(rX, rY);
 
-        // Fire
-        const btnFire = gamepad1.buttons[0]?.pressed || gamepad1.buttons[7]?.pressed;
-        if (btnFire) {
-          fireActiveLaser(p1, 1);
-        }
+            const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
+            if (isLTPressed) {
+              isAnyLTPressed = true;
+            }
 
-        // Active abilities bindings for gamepad1
-        const btnLightning1 = gamepad1.buttons[2]?.pressed || gamepad1.buttons[4]?.pressed; // X or LB
-        const btnPulse1 = gamepad1.buttons[1]?.pressed; // B
-        const btnSuperMagnet1 = gamepad1.buttons[3]?.pressed || gamepad1.buttons[5]?.pressed; // Y or RB
+            if (isLTPressed) {
+              // Drift lock: disable standard steering
+            } else if (rightStickMagnitude > 0.22) {
+              p.targetAngle = Math.atan2(rY, rX);
+              let deltaAngle = p.targetAngle - p.angle;
+              while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+              while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+              const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+              p.angle += deltaAngle * Math.min(1, rotSpeed);
+            } else if (Math.abs(axisX) > 0.18) {
+              p.angle += axisX * 0.08;
+            }
 
-        if (btnLightning1) {
-          triggerChainLightning(1);
-        }
-        if (btnPulse1) {
-          triggerPulseWaveRing(1);
-        }
-        if (btnSuperMagnet1) {
-          triggerSuperMagnetVacuum(1);
-        }
-      } else {
-        // Keyboard input for Player 1
-        p1.thrusting = !!(keysPressed.current['KeyW'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single');
-        p1.reversing = !!keysPressed.current['KeyS'];
+            if (isLTPressed) {
+              p.thrusting = true;
+            } else {
+              p.thrusting = axisY < -0.18;
+              p.reversing = axisY > 0.15;
+            }
 
-        if (keysPressed.current['KeyA']) {
-          p1.angle -= 0.08;
-          handledP1Rotation = true;
-        } else if (keysPressed.current['KeyD']) {
-          p1.angle += 0.08;
-          handledP1Rotation = true;
-        }
+            const btnFire = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed;
+            if (btnFire) {
+              fireActiveLaser(p, p.playerNum);
+            }
 
-        // Fire
-        if (keysPressed.current['Space'] || keysPressed.current['MouseDown'] && gameModeRef.current === 'single') {
-          fireActiveLaser(p1, 1);
+            if (gp.buttons[2]?.pressed || gp.buttons[4]?.pressed) {
+              triggerChainLightning(p.playerNum);
+            }
+            if (gp.buttons[1]?.pressed) {
+              triggerPulseWaveRing(p.playerNum);
+            }
+            if (gp.buttons[3]?.pressed || gp.buttons[5]?.pressed) {
+              triggerSuperMagnetVacuum(p.playerNum);
+            }
+          }
         }
       }
-
-      // Single-player mouse-centric fallback steering
-      if (!handledP1Rotation && gameModeRef.current === 'single' && lastInputDeviceRef.current !== 'gamepad') {
-        const mouseAngle = Math.atan2(mousePos.current.y - centerY, mousePos.current.x - centerX);
-        p1.targetAngle = mouseAngle;
-
-        let deltaAngle = p1.targetAngle - p1.angle;
-        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-
-        const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-        p1.angle += deltaAngle * Math.min(1, rotSpeed);
-      }
-    } else {
-      p1.thrusting = false;
-      p1.reversing = false;
-    }
-
-    // --- 2. PLAYER 2 INPUT PROCESS (COOP MODE ONLY) ---
-    if (gameModeRef.current === 'coop') {
-      let handledP2Rotation = false;
-
-      if (p2HullRef.current > 0) {
-        if (gamepad2) {
-          const axisX = gamepad2.axes[0];
-          const axisY = gamepad2.axes[1];
-
-          // Right stick for direct aiming direction
-          const rX = gamepad2.axes[2] || 0;
-          const rY = gamepad2.axes[3] || 0;
-          const rightStickMagnitude = Math.hypot(rX, rY);
-          
-          // Check if LT (Left Trigger, button 6) is pressed
-          const isLTPressed = gamepad2.buttons[6]?.pressed || (gamepad2.buttons[6]?.value || 0) > 0.15;
-          if (isLTPressed) {
-            isAnyLTPressed = true;
-          }
-
-          // Gamepad intent detection
-          const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
-          const isAnyButtonActive = gamepad2.buttons.some(b => b.pressed);
-          if (isAnyAxisActive || isAnyButtonActive || isLTPressed) {
-            lastInputDeviceRef.current = 'gamepad';
-          }
-
-          // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
-          // If LT is pressed, disable rotation completely ('a vůbec se to neotacelo')
-          if (isLTPressed) {
-            handledP2Rotation = true;
-          } else if (rightStickMagnitude > 0.22) {
-            const targetAngle = Math.atan2(rY, rX);
-            p2.targetAngle = targetAngle;
-            
-            let deltaAngle = p2.targetAngle - p2.angle;
-            while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-            while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-
-            const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-            p2.angle += deltaAngle * Math.min(1, rotSpeed);
-            handledP2Rotation = true;
-          } else if (Math.abs(axisX) > 0.18) {
-            p2.angle += axisX * 0.075;
-            handledP2Rotation = true;
-          }
-          
-          // Thrust / Reverse
-          if (isLTPressed) {
-            p2.thrusting = true;
-            p2.reversing = false;
-          } else {
-            p2.thrusting = axisY < -0.18;
-            p2.reversing = axisY > 0.18;
-          }
-
-          // Fire
-          const btnFire = gamepad2.buttons[0]?.pressed || gamepad2.buttons[7]?.pressed;
-          if (btnFire) {
-            fireActiveLaser(p2, 2);
-          }
-
-          // Active abilities bindings for gamepad2
-          const btnLightning2 = gamepad2.buttons[2]?.pressed || gamepad2.buttons[4]?.pressed; // X or LB
-          const btnPulse2 = gamepad2.buttons[1]?.pressed; // B
-          const btnSuperMagnet2 = gamepad2.buttons[3]?.pressed || gamepad2.buttons[5]?.pressed; // Y or RB
-
-          if (btnLightning2) {
-            triggerChainLightning(2);
-          }
-          if (btnPulse2) {
-            triggerPulseWaveRing(2);
-          }
-          if (btnSuperMagnet2) {
-            triggerSuperMagnetVacuum(2);
-          }
-        } else {
-          // Keyboard inputs for Player 2
-          p2.thrusting = !!(keysPressed.current['ArrowUp'] || keysPressed.current['KeyI']);
-          p2.reversing = !!(keysPressed.current['ArrowDown'] || keysPressed.current['KeyK']);
-
-          if (keysPressed.current['ArrowLeft'] || keysPressed.current['KeyJ']) {
-            p2.angle -= 0.08;
-            handledP2Rotation = true;
-          } else if (keysPressed.current['ArrowRight'] || keysPressed.current['KeyL']) {
-            p2.angle += 0.08;
-            handledP2Rotation = true;
-          }
-
-          // Fire
-          if (
-            keysPressed.current['Enter'] || 
-            keysPressed.current['ShiftRight'] || 
-            keysPressed.current['KeyO']
-          ) {
-            fireActiveLaser(p2, 2);
-          }
-        }
-      } else {
-        p2.thrusting = false;
-        p2.reversing = false;
-      }
-    }
+    });
 
     updateEngineHum(isAnyLTPressed);
 
-    // --- 3. APPLY PHYSICAL SPEEDS ---
-    const activePlayersNum = gameModeRef.current === 'coop' ? 2 : 1;
-    const listPlayers = [p1, p2];
+    // --- APPLY PHYSICAL MOVEMENT SPEEDS AND DECELERATION ---
+    playersRef.current.forEach(p => {
+      if (p.hull > 0) {
+        const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
+        const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
+        const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
 
-    for (let i = 0; i < activePlayersNum; i++) {
-      const p = listPlayers[i];
-      const pCurrentHull = i === 0 ? p1HullRef.current : p2HullRef.current;
-      
-      // Skip dead players
-      if (pCurrentHull <= 0) continue;
+        if (p.thrusting) {
+          p.vx += Math.cos(p.angle) * thrustPower;
+          p.vy += Math.sin(p.angle) * thrustPower;
 
-      const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
-      const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
-      const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
-
-      if (p.thrusting) {
-        p.vx += Math.cos(p.angle) * thrustPower;
-        p.vy += Math.sin(p.angle) * thrustPower;
-
-        // Jet exhaust fire simulation
-        if (Math.random() < 0.4) {
-          const backAngle = p.angle + Math.PI + (Math.random() * 0.6 - 0.3);
-          const ex = p.x - Math.cos(p.angle) * 18;
-          const ey = p.y - Math.sin(p.angle) * 18;
-          particlesRef.current.push({
-            id: Math.random().toString(36).substring(2, 9),
-            x: ex,
-            y: ey,
-            vx: Math.cos(backAngle) * (Math.random() * 3 + 1.2) + p.vx * 0.4,
-            vy: Math.sin(backAngle) * (Math.random() * 3 + 1.2) + p.vy * 0.4,
-            color: i === 0 
-              ? (Math.random() < 0.35 ? '#3b82f6' : '#f97316')
-              : (Math.random() < 0.35 ? '#a855f7' : '#ec4899'), // rose booster exhaust for P2
-            size: Math.random() * 3.5 + 1.5,
-            alpha: 1.0,
-            lifetime: 0,
-            maxLifetime: 20 + Math.floor(Math.random() * 15),
-          });
+          // Jet exhaust particles with custom player primary color booster flares
+          if (Math.random() < 0.4) {
+            const backAngle = p.angle + Math.PI + (Math.random() * 0.6 - 0.3);
+            const ex = p.x - Math.cos(p.angle) * 18;
+            const ey = p.y - Math.sin(p.angle) * 18;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: ex,
+              y: ey,
+              vx: Math.cos(backAngle) * (Math.random() * 3 + 1.25) + p.vx * 0.4,
+              vy: Math.sin(backAngle) * (Math.random() * 3 + 1.25) + p.vy * 0.4,
+              color: Math.random() < 0.35 ? p.color : p.glowColor,
+              size: Math.random() * 3.5 + 1.5,
+              alpha: 1.0,
+              lifetime: 0,
+              maxLifetime: 20 + Math.floor(Math.random() * 15),
+            });
+          }
+        } else if (p.reversing) {
+          p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
+          p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
         }
-      } else if (p.reversing) {
-        p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
-        p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
-      }
 
-      // Max absolute velocity clamp
-      let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-      if (speed > maxSpeed) {
-        p.vx = (p.vx / speed) * maxSpeed;
-        p.vy = (p.vy / speed) * maxSpeed;
-      }
+        let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+        if (speed > maxSpeed) {
+          p.vx = (p.vx / speed) * maxSpeed;
+          p.vy = (p.vy / speed) * maxSpeed;
+        }
 
-      // Space resistance drift
-      p.vx *= inertiaFriction;
-      p.vy *= inertiaFriction;
+        p.vx *= inertiaFriction;
+        p.vy *= inertiaFriction;
+      } else {
+        // Slow down wreckage slow-drift
+        p.vx *= 0.96;
+        p.vy *= 0.96;
+      }
 
       p.x += p.vx;
       p.y += p.vy;
@@ -1280,67 +1225,80 @@ export default function App() {
       if (p.invulnerableTime > 0) {
         p.invulnerableTime--;
       }
-    }
+    });
 
-    // --- 4. COOPERATIVE BOUNDARY COMPARTMENT (Prevent straying off screen) ---
-    if (gameModeRef.current === 'coop' && p1HullRef.current > 0 && p2HullRef.current > 0) {
-      const dxDist = p1.x - p2.x;
-      const dyDist = p1.y - p2.y;
-      const spaceDist = Math.sqrt(dxDist * dxDist + dyDist * dyDist);
-      const maximumLimit = Math.min(width, height) * 0.78; // comfortable viewing circle
-      if (spaceDist > maximumLimit) {
-        const excess = spaceDist - maximumLimit;
-        const pushX = (dxDist / spaceDist) * (excess / 2);
-        const pushY = (dyDist / spaceDist) * (excess / 2);
+    // --- COOPERATIVE PROXIMITY ATTRACTION (PULL STRAGGLERS) ---
+    if (playersRef.current.length > 1) {
+      let sumX = 0; let sumY = 0;
+      let aliveCount = 0;
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          sumX += p.x;
+          sumY += p.y;
+          aliveCount++;
+        }
+      });
 
-        p1.x -= pushX;
-        p1.y -= pushY;
-        p2.x += pushX;
-        p2.y += pushY;
+      if (aliveCount > 1) {
+        const avgX = sumX / aliveCount;
+        const avgY = sumY / aliveCount;
+        const maxLimit = Math.min(width, height) * 0.82;
 
-        p1.vx *= 0.94;
-        p1.vy *= 0.94;
-        p2.vx *= 0.94;
-        p2.vy *= 0.94;
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            const dx = p.x - avgX;
+            const dy = p.y - avgY;
+            const dist = Math.hypot(dx, dy);
+            if (dist > maxLimit) {
+              const excess = dist - maxLimit;
+              p.x -= (dx / dist) * excess;
+              p.y -= (dy / dist) * excess;
+              p.vx *= 0.94;
+              p.vy *= 0.94;
+            }
+          }
+        });
       }
     }
 
-    // --- COOP MODE REVIVAL PROCESS ---
-    if (gameModeRef.current === 'coop') {
-      const p1 = p1Ref.current;
-      const p2 = p2Ref.current;
-      const dx = p1.x - p2.x;
-      const dy = p1.y - p2.y;
-      const dist = Math.hypot(dx, dy);
+    // --- DYNAMIC REVIVAL LOGIC ---
+    playersRef.current.forEach(deadPlayer => {
+      if (deadPlayer.hull <= 0) {
+        // Find nearest living helper player
+        let helperNear = false;
+        playersRef.current.forEach(livingHero => {
+          if (livingHero.hull > 0) {
+            const dx = deadPlayer.x - livingHero.x;
+            const dy = deadPlayer.y - livingHero.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 90) {
+              helperNear = true;
+            }
+          }
+        });
 
-      // Player 2 reviving Player 1
-      if (p1HullRef.current <= 0 && p2HullRef.current > 0) {
-        if (dist < 90) {
-          p1ReviveTimerRef.current += 1;
-          if (p1ReviveTimerRef.current >= 150) { // 2.5 seconds at 60fps
-            const p1MaxHull = 100 + (upgradesRef.current.hullLevel - 1) * 50 + (upgradesRef.current.hullLevel >= 5 ? 20 : 0) + (upgradesRef.current.hullLevel >= 6 ? 30 : 0);
-            const revivedHP = Math.round(p1MaxHull * 0.4);
-            
-            p1HullRef.current = revivedHP;
-            setHull(revivedHP);
-            p1.invulnerableTime = 120; // 2 seconds invulnerability
-            p1ReviveTimerRef.current = 0;
-            
-            p1.vx = 0;
-            p1.vy = 0;
-            p1.angle = -Math.PI / 2;
-            
-            addGainNotification('🚀 HRÁČ 1 OŽIVEN S 40% TRUPEM!', '#22c55e');
+        if (helperNear) {
+          deadPlayer.reviveTimer += 1.0;
+          if (deadPlayer.reviveTimer >= 150) { // 2.5s at 60fps
+            const hpRestoreVal = Math.round(deadPlayer.maxHull * 0.4);
+            deadPlayer.hull = hpRestoreVal;
+            deadPlayer.invulnerableTime = 120;
+            deadPlayer.reviveTimer = 0;
+            deadPlayer.vx = 0;
+            deadPlayer.vy = 0;
+            deadPlayer.angle = -Math.PI / 2;
 
-            // Beautiful green burst particles
+            addGainNotification(`🛸 ${deadPlayer.name} OŽIVEN S 40% TRUPEM!`, deadPlayer.color);
+
+            // Emit lovely celebratory rings of healing spark particles
             for (let angle = 0; angle < Math.PI * 2; angle += 0.22) {
               particlesRef.current.push({
                 id: Math.random().toString(36).substring(2, 9),
-                x: p1.x,
-                y: p1.y,
-                vx: Math.cos(angle) * (Math.random() * 4 + 3),
-                vy: Math.sin(angle) * (Math.random() * 4 + 3),
-                color: '#22c55e',
+                x: deadPlayer.x,
+                y: deadPlayer.y,
+                vx: Math.cos(angle) * (Math.random() * 4 + 3.2),
+                vy: Math.sin(angle) * (Math.random() * 4 + 3.2),
+                color: deadPlayer.color,
                 size: Math.random() * 4.5 + 2.5,
                 alpha: 1.0,
                 lifetime: 0,
@@ -1349,86 +1307,39 @@ export default function App() {
             }
           }
         } else {
-          // Slowly decay progress if not near
-          p1ReviveTimerRef.current = Math.max(0, p1ReviveTimerRef.current - 1.5);
+          deadPlayer.reviveTimer = Math.max(0, deadPlayer.reviveTimer - 1.5);
         }
-      } else {
-        p1ReviveTimerRef.current = 0;
       }
+    });
 
-      // Player 1 reviving Player 2
-      if (p2HullRef.current <= 0 && p1HullRef.current > 0) {
-        if (dist < 90) {
-          p2ReviveTimerRef.current += 1;
-          if (p2ReviveTimerRef.current >= 150) { // 2.5 seconds at 60fps
-            const p2MaxHull = 100 + (upgradesRef.current.hullLevel - 1) * 50 + (upgradesRef.current.hullLevel >= 5 ? 20 : 0) + (upgradesRef.current.hullLevel >= 6 ? 30 : 0);
-            const revivedHP = Math.round(p2MaxHull * 0.4);
-            
-            p2HullRef.current = revivedHP;
-            setP2Hull(revivedHP);
-            p2.invulnerableTime = 120; // 2 seconds invulnerability
-            p2ReviveTimerRef.current = 0;
-            
-            p2.vx = 0;
-            p2.vy = 0;
-            p2.angle = -Math.PI / 2;
+    // --- SHIELD REGENERATION FOR ALL ALIVE CHARGED PLAYERS ---
+    if (shieldRegenCooldown.current > 0) {
+      shieldRegenCooldown.current--;
+    }
 
-            addGainNotification('🛸 HRÁČ 2 OŽIVEN S 40% TRUPEM!', '#a855f7');
-
-            // Beautiful purple burst particles
-            for (let angle = 0; angle < Math.PI * 2; angle += 0.22) {
-              particlesRef.current.push({
-                id: Math.random().toString(36).substring(2, 9),
-                x: p2.x,
-                y: p2.y,
-                vx: Math.cos(angle) * (Math.random() * 4 + 3),
-                vy: Math.sin(angle) * (Math.random() * 4 + 3),
-                color: '#a855f7',
-                size: Math.random() * 4.5 + 2.5,
-                alpha: 1.0,
-                lifetime: 0,
-                maxLifetime: 35,
-              });
-            }
-          }
-        } else {
-          // Slowly decay progress if not near
-          p2ReviveTimerRef.current = Math.max(0, p2ReviveTimerRef.current - 1.5);
+    playersRef.current.forEach(p => {
+      if (p.hull > 0 && upgradesRef.current.shieldLevel > 0 && p.shield < p.maxShield) {
+        if (shieldRegenCooldown.current <= 0) {
+          const baseRegen = 0.04;
+          const powerMultiplier = 1 + (upgradesRef.current.shieldLevel - 1) * 0.35;
+          const actualRegen = baseRegen * powerMultiplier;
+          p.shield = Math.min(p.maxShield, p.shield + actualRegen);
         }
-      } else {
-        p2ReviveTimerRef.current = 0;
       }
-    }
+    });
 
-    // --- 5. SHIELD PASSIVE RECHARGE LOOPS ---
-    // Player 1 Shield regen
-    if (p1HullRef.current > 0 && upgradesRef.current.shieldLevel > 0 && p1ShieldRef.current < maxShieldRef.current) {
-      if (shieldRegenCooldown.current > 0) {
-        shieldRegenCooldown.current--;
-      } else {
-        const baseRegen = 0.04;
-        const powerMultiplier = 1 + (upgradesRef.current.shieldLevel - 1) * 0.35;
-        const actualRegen = baseRegen * powerMultiplier;
-        setShield(curr => {
-          const nextVal = curr + actualRegen;
-          return nextVal >= maxShieldRef.current ? maxShieldRef.current : nextVal;
-        });
-      }
+    // Settle React state stats regularly so scoreboards and other layers update correctly
+    const kbP1Val = playersRef.current.find(pl => pl.inputSource === 'keyboard_p1');
+    const kbP2Val = playersRef.current.find(pl => pl.inputSource === 'keyboard_p2');
+    if (kbP1Val) {
+      setHull(Math.round(kbP1Val.hull));
+      setShield(Math.round(kbP1Val.shield));
     }
-
-    // Player 2 Shield regen (Coop only)
-    if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
-      const p2MaxShield = p2MaxShieldRef.current;
-      if (upgradesRef.current.shieldLevel > 0 && p2ShieldRef.current < p2MaxShield) {
-        const baseRegen = 0.04;
-        const powerMultiplier = 1 + (upgradesRef.current.shieldLevel - 1) * 0.35;
-        const actualRegen = baseRegen * powerMultiplier;
-        setP2Shield(curr => {
-          const nextVal = curr + actualRegen;
-          return nextVal >= p2MaxShield ? p2MaxShield : nextVal;
-        });
-      }
+    if (kbP2Val) {
+      setP2Hull(Math.round(kbP2Val.hull));
+      setP2Shield(Math.round(kbP2Val.shield));
     }
+    setActivePlayers([...playersRef.current]);
 
     // --- ACTIVE ABILITIES COOLDOWNS TICKING ---
     if (lightningCooldownRef.current > 0) {
@@ -1500,22 +1411,24 @@ export default function App() {
 
     oresRef.current = oresRef.current.map(ore => {
       // Find nearest active player as gravity center
-      let targetPlayer = p1;
-      let dx = ore.x - p1.x;
-      let dy = ore.y - p1.y;
-      let minDist = Math.sqrt(dx * dx + dy * dy);
+      let targetPlayer: Player | null = null;
+      let minDist = 999999;
+      let dx = 0;
+      let dy = 0;
 
-      if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
-        const dx2 = ore.x - p2.x;
-        const dy2 = ore.y - p2.y;
-        const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-        if (dist2 < minDist) {
-          targetPlayer = p2;
-          dx = dx2;
-          dy = dy2;
-          minDist = dist2;
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const tdx = ore.x - p.x;
+          const tdy = ore.y - p.y;
+          const dist = Math.hypot(tdx, tdy);
+          if (dist < minDist) {
+            minDist = dist;
+            targetPlayer = p;
+            dx = tdx;
+            dy = tdy;
+          }
         }
-      }
+      });
 
       const dist = minDist;
 
@@ -1525,7 +1438,7 @@ export default function App() {
         ore.pulseDir *= -1;
       }
 
-      if (dist < magnetRadius) {
+      if (targetPlayer && dist < magnetRadius) {
         const pullDirX = -dx / dist;
         const pullDirY = -dy / dist;
         const velocityAcc = magnetPullStrength * (1 + (magnetRadius - dist) / 100);
@@ -1545,27 +1458,26 @@ export default function App() {
       return ore;
     });
 
-    // Check ore collection with both players independently
+    // Check ore collection with any living player independently
     oresRef.current = oresRef.current.filter(ore => {
-      const dx1 = ore.x - p1.x;
-      const dy1 = ore.y - p1.y;
-      const distP1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-      const collidedP1 = p1HullRef.current > 0 && distP1 < p1.radius + ore.radius;
+      let collidedPlayer: Player | null = null;
 
-      let collidedP2 = false;
-      if (gameModeRef.current === 'coop' && p2HullRef.current > 0) {
-        const dx2 = ore.x - p2.x;
-        const dy2 = ore.y - p2.y;
-        const distP2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-        collidedP2 = distP2 < p2.radius + ore.radius;
-      }
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const distP = Math.hypot(ore.x - p.x, ore.y - p.y);
+          if (distP < p.radius + ore.radius) {
+            collidedPlayer = p;
+          }
+        }
+      });
 
-      if (collidedP1 || collidedP2) {
-        const activeCollectorNum = collidedP1 ? 1 : 2;
+      if (collidedPlayer) {
+        const pColor = (collidedPlayer as Player).color;
+        const pName = (collidedPlayer as Player).name;
         playCollectSound(ore.type);
         triggerOreSparkExplosion(ore.x, ore.y, ore.color);
 
-        let awardLabel = `Hráč ${activeCollectorNum}: +1 Krystal`;
+        let awardLabel = `${pName}: +1 Krystal`;
 
         if (ore.type === 'crystal') {
           setRunCrystals(c => c + 1);
@@ -1574,7 +1486,7 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `Hráč ${activeCollectorNum}: +1 Krystal`;
+          awardLabel = `${pName}: +1 Krystal`;
         } else if (ore.type === 'diamond') {
           setRunDiamonds(d => d + 1);
           setStats(curr => {
@@ -1582,7 +1494,7 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `Hráč ${activeCollectorNum}: +1 Diamant`;
+          awardLabel = `${pName}: +1 Diamant`;
         } else if (ore.type === 'obsidian') {
           setRunObsidian(o => o + 1);
           setStats(curr => {
@@ -1590,7 +1502,7 @@ export default function App() {
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `Hráč ${activeCollectorNum}: +1 Obsidián`;
+          awardLabel = `${pName}: +1 Obsidián`;
         }
 
         addGainNotification(awardLabel, ore.color);
@@ -1630,25 +1542,28 @@ export default function App() {
       asteroid.y += asteroid.vy;
       asteroid.angle += asteroid.angularVelocity;
 
-      // Wrap around anchor location Player 1
-      const pX = p1.x;
-      const pY = p1.y;
-      const adx = asteroid.x - pX;
-      const ady = asteroid.y - pY;
-      const distanceToPlayer = Math.sqrt(adx * adx + ady * ady);
+      // Wrap around anchor location of the first alive player
+      const anchorPlayer = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
+      if (anchorPlayer) {
+        const pX = anchorPlayer.x;
+        const pY = anchorPlayer.y;
+        const adx = asteroid.x - pX;
+        const ady = asteroid.y - pY;
+        const distanceToPlayer = Math.sqrt(adx * adx + ady * ady);
 
-      if (distanceToPlayer > 1300) {
-        const angleOffset = p1.vx || p1.vy 
-          ? Math.atan2(p1.vy, p1.vx) + (Math.random() * 1.5 - 0.75)
-          : Math.random() * Math.PI * 2;
-        
-        asteroid.x = pX + Math.cos(angleOffset) * 1100;
-        asteroid.y = pY + Math.sin(angleOffset) * 1100;
-        
-        const pathAngle = angleOffset + Math.PI + (Math.random() * 1.0 - 0.5);
-        const spd = Math.random() * 1.3 + 0.4;
-        asteroid.vx = Math.cos(pathAngle) * spd;
-        asteroid.vy = Math.sin(pathAngle) * spd;
+        if (distanceToPlayer > 1300) {
+          const angleOffset = anchorPlayer.vx || anchorPlayer.vy 
+            ? Math.atan2(anchorPlayer.vy, anchorPlayer.vx) + (Math.random() * 1.5 - 0.75)
+            : Math.random() * Math.PI * 2;
+          
+          asteroid.x = pX + Math.cos(angleOffset) * 1100;
+          asteroid.y = pY + Math.sin(angleOffset) * 1100;
+          
+          const pathAngle = angleOffset + Math.PI + (Math.random() * 1.0 - 0.5);
+          const spd = Math.random() * 1.3 + 0.4;
+          asteroid.vx = Math.cos(pathAngle) * spd;
+          asteroid.vy = Math.sin(pathAngle) * spd;
+        }
       }
     });
 
@@ -1704,133 +1619,65 @@ export default function App() {
 
     lasersRef.current = lasersRef.current.filter(l => l.lifetime < l.maxLifetime);
 
-    // --- SHIP CRASH CHECK PLAYER 1 ---
-    if (p1HullRef.current > 0 && p1.invulnerableTime <= 0) {
-      asteroidsRef.current.forEach(asteroid => {
-        const sdx = p1.x - asteroid.x;
-        const sdy = p1.y - asteroid.y;
-        const playerShipHurtDist = p1.radius + asteroid.radius - 3;
+    // --- SHIP CRASH CHECK FOR ALL ACTIVE PLAYERS ---
+    playersRef.current.forEach(p => {
+      if (p.hull > 0 && p.invulnerableTime <= 0) {
+        asteroidsRef.current.forEach(asteroid => {
+          const sdx = p.x - asteroid.x;
+          const sdy = p.y - asteroid.y;
+          const playerShipHurtDist = p.radius + asteroid.radius - 3;
 
-        if (sdx * sdx + sdy * sdy < playerShipHurtDist * playerShipHurtDist) {
-          const angle = Math.atan2(sdy, sdx);
-          p1.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
-          p1.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
-          p1.invulnerableTime = 70;
+          if (sdx * sdx + sdy * sdy < playerShipHurtDist * playerShipHurtDist) {
+            const angle = Math.atan2(sdy, sdx);
+            p.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
+            p.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
+            p.invulnerableTime = 70;
 
-          let rawDmg = 8;
-          if (asteroid.size === 'huge') rawDmg = 38;
-          else if (asteroid.size === 'large') rawDmg = 24;
-          else if (asteroid.size === 'medium') rawDmg = 14;
+            let rawDmg = 8;
+            if (asteroid.size === 'huge') rawDmg = 38;
+            else if (asteroid.size === 'large') rawDmg = 24;
+            else if (asteroid.size === 'medium') rawDmg = 14;
 
-          const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
-          const calculatedDmg = Math.round(rawDmg * armorMultiplier);
+            const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
+            const calculatedDmg = Math.round(rawDmg * armorMultiplier);
 
-          playDamageSound();
+            playDamageSound();
 
-          setShield(currShield => {
-            let nextShield = currShield;
             let finalDmgToHull = calculatedDmg;
 
-            if (currShield > 0) {
-              if (currShield >= calculatedDmg) {
-                nextShield = currShield - calculatedDmg;
+            if (p.shield > 0) {
+              if (p.shield >= calculatedDmg) {
+                p.shield -= calculatedDmg;
                 finalDmgToHull = 0;
-                addGainNotification(`NÁRAZ H1: ŠTÍT ABS. -${calculatedDmg} HP`, '#38bdf8');
+                addGainNotification(`${p.name}: ŠTÍT ABS. -${calculatedDmg} HP`, '#38bdf8');
               } else {
-                finalDmgToHull = calculatedDmg - currShield;
-                nextShield = 0;
-                addGainNotification('H1: ŠTÍT ZNIČEN!', '#ef4444');
+                finalDmgToHull = calculatedDmg - p.shield;
+                p.shield = 0;
+                addGainNotification(`${p.name}: ŠTÍT ZNIČEN!`, '#ef4444');
                 playShieldDownSound();
               }
             }
 
             if (finalDmgToHull > 0) {
-              setHull(currHull => {
-                const nextHull = currHull - finalDmgToHull;
-                addGainNotification(`NÁRAZ H1: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
-                
-                if (nextHull <= 0) {
-                  if (gameModeRef.current === 'single' || p2HullRef.current <= 0) {
-                    triggerShipCatastrophicFailure();
-                  } else {
-                    addGainNotification('HLÁŠENÍ: Hráč 1 byl ZNIČEN! Chraň loď, Hráči 2!', '#ef4444');
-                  }
-                  return 0;
+              p.hull = Math.max(0, p.hull - finalDmgToHull);
+              addGainNotification(`${p.name}: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
+
+              if (p.hull <= 0) {
+                // Check if any other player is still alive
+                const anyoneAlive = playersRef.current.some(pl => pl.hull > 0);
+                if (!anyoneAlive) {
+                   triggerShipCatastrophicFailure();
+                } else {
+                   addGainNotification(`HLÁŠENÍ: ${p.name} byl ZNIČEN! Braňte pozice!`, '#ef4444');
                 }
-                return nextHull;
-              });
-            }
-
-            return nextShield;
-          });
-
-          shieldRegenCooldown.current = upgradesRef.current.shieldLevel >= 5 ? 38 : 240;
-        }
-      });
-    }
-
-    // --- SHIP CRASH CHECK PLAYER 2 (COOP) ---
-    if (gameModeRef.current === 'coop' && p2HullRef.current > 0 && p2.invulnerableTime <= 0) {
-      asteroidsRef.current.forEach(asteroid => {
-        const sdx = p2.x - asteroid.x;
-        const sdy = p2.y - asteroid.y;
-        const playerShipHurtDist = p2.radius + asteroid.radius - 3;
-
-        if (sdx * sdx + sdy * sdy < playerShipHurtDist * playerShipHurtDist) {
-          const angle = Math.atan2(sdy, sdx);
-          p2.vx = Math.cos(angle) * (6 + asteroid.radius * 0.05);
-          p2.vy = Math.sin(angle) * (6 + asteroid.radius * 0.05);
-          p2.invulnerableTime = 70;
-
-          let rawDmg = 8;
-          if (asteroid.size === 'huge') rawDmg = 38;
-          else if (asteroid.size === 'large') rawDmg = 24;
-          else if (asteroid.size === 'medium') rawDmg = 14;
-
-          const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
-          const calculatedDmg = Math.round(rawDmg * armorMultiplier);
-
-          playDamageSound();
-
-          setP2Shield(currShield => {
-            let nextShield = currShield;
-            let finalDmgToHull = calculatedDmg;
-
-            if (currShield > 0) {
-              if (currShield >= calculatedDmg) {
-                nextShield = currShield - calculatedDmg;
-                finalDmgToHull = 0;
-                addGainNotification(`NÁRAZ H2: ŠTÍT ABS. -${calculatedDmg} HP`, '#f43f5e');
-              } else {
-                finalDmgToHull = calculatedDmg - currShield;
-                nextShield = 0;
-                addGainNotification('H2: ŠTÍT ZNIČEN!', '#ef4444');
-                playShieldDownSound();
               }
             }
 
-            if (finalDmgToHull > 0) {
-              setP2Hull(currHull => {
-                const nextHull = currHull - finalDmgToHull;
-                addGainNotification(`NÁRAZ H2: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
-                
-                if (nextHull <= 0) {
-                  if (p1HullRef.current <= 0) {
-                    triggerShipCatastrophicFailure();
-                  } else {
-                    addGainNotification('HLÁŠENÍ: Hráč 2 byl ZNIČEN! Chraň loď, Hráči 1!', '#ef4444');
-                  }
-                  return 0;
-                }
-                return nextHull;
-              });
-            }
-
-            return nextShield;
-          });
-        }
-      });
-    }
+            shieldRegenCooldown.current = upgradesRef.current.shieldLevel >= 5 ? 38 : 240;
+          }
+        });
+      }
+    });
 
     // --- 9. PARTICLES RENDER TICK ---
     particlesRef.current = particlesRef.current.map(particle => {
@@ -1916,14 +1763,15 @@ export default function App() {
     });
   };
 
-  const triggerChainLightning = (playerNum: 1 | 2) => {
+  const triggerChainLightning = (playerNum: number) => {
     const lvl = upgradesRef.current.abilityLightningLevel;
     if (lvl <= 0) return;
 
     if (lightningCooldownRef.current > 0) return;
 
-    const p = playerNum === 1 ? p1Ref.current : p2Ref.current;
-    if (p.invulnerableTime > 0 && p1HullRef.current <= 0) return;
+    const p = playersRef.current.find(pl => pl.playerNum === playerNum);
+    if (!p) return;
+    if (p.invulnerableTime > 0 && p.hull <= 0) return;
 
     // Find nearest asteroid candidate in range
     const searchLimit = 520;
@@ -2014,14 +1862,15 @@ export default function App() {
     }
   };
 
-  const triggerPulseWaveRing = (playerNum: 1 | 2) => {
+  const triggerPulseWaveRing = (playerNum: number) => {
     const lvl = upgradesRef.current.abilityPulseLevel;
     if (lvl <= 0) return;
 
     if (pulseCooldownRef.current > 0) return;
 
-    const p = playerNum === 1 ? p1Ref.current : p2Ref.current;
-    if (p.invulnerableTime > 0 && p1HullRef.current <= 0) return;
+    const p = playersRef.current.find(pl => pl.playerNum === playerNum);
+    if (!p) return;
+    if (p.invulnerableTime > 0 && p.hull <= 0) return;
 
     pulseCooldownRef.current = 10 * 60; // 10s cooldown
     setPulseCooldown(10);
@@ -2082,11 +1931,15 @@ export default function App() {
     });
   };
 
-  const triggerSuperMagnetVacuum = (playerNum: 1 | 2) => {
+  const triggerSuperMagnetVacuum = (playerNum: number) => {
     const lvl = upgradesRef.current.abilitySuperMagnetLevel;
     if (lvl <= 0) return;
 
     if (superMagnetActiveRef.current > 0 || superMagnetCooldownRef.current > 0) return;
+
+    const p = playersRef.current.find(pl => pl.playerNum === playerNum);
+    if (!p) return;
+    if (p.invulnerableTime > 0 && p.hull <= 0) return;
 
     const durationSeconds = lvl === 3 ? 12 : lvl === 2 ? 8 : 5;
     superMagnetActiveRef.current = durationSeconds * 60;
@@ -2177,47 +2030,27 @@ export default function App() {
     setIsGameOver(true);
     playExplosionSound('huge');
 
-    // Explode Player 1
-    const p1x = p1Ref.current.x;
-    const p1y = p1Ref.current.y;
-    for (let i = 0; i < 60; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const spd = Math.random() * 6.5 + 2.0;
-      particlesRef.current.push({
-        id: Math.random().toString(36).substring(2, 9),
-        x: p1x,
-        y: p1y,
-        vx: Math.cos(a) * spd,
-        vy: Math.sin(a) * spd,
-        color: ['#38bdf8', '#3b82f6', '#facc15', '#ffffff'][Math.floor(Math.random() * 4)],
-        size: Math.random() * 5.0 + 2.0,
-        alpha: 1.0,
-        lifetime: 0,
-        maxLifetime: 60 + Math.floor(Math.random() * 40),
-      });
-    }
-
-    // Explode Player 2 (if in coop)
-    if (gameModeRef.current === 'coop') {
-      const p2x = p2Ref.current.x;
-      const p2y = p2Ref.current.y;
+    // Explode all active players
+    playersRef.current.forEach(p => {
+      const px = p.x;
+      const py = p.y;
       for (let i = 0; i < 60; i++) {
         const a = Math.random() * Math.PI * 2;
         const spd = Math.random() * 6.5 + 2.0;
         particlesRef.current.push({
           id: Math.random().toString(36).substring(2, 9),
-          x: p2x,
-          y: p2y,
+          x: px,
+          y: py,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
-          color: ['#f43f5e', '#a855f7', '#facc15', '#ffffff'][Math.floor(Math.random() * 4)],
+          color: [p.color, p.glowColor, '#facc15', '#ffffff'][Math.floor(Math.random() * 4)],
           size: Math.random() * 5.0 + 2.0,
           alpha: 1.0,
           lifetime: 0,
           maxLifetime: 60 + Math.floor(Math.random() * 40),
         });
       }
-    }
+    });
 
     if (animationFrameId.current) {
       cancelAnimationFrame(animationFrameId.current);
@@ -2280,21 +2113,28 @@ export default function App() {
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, width, height);
 
-    const p1 = p1Ref.current;
-    const p2 = p2Ref.current;
-    
-    // Choose dynamic center of projection based on player positions
-    let targetCamX = p1.x;
-    let targetCamY = p1.y;
+    // Choose dynamic center of projection based on all alive player positions
+    let sumX = 0;
+    let sumY = 0;
+    let aliveCount = 0;
 
-    if (gameModeRef.current === 'coop') {
-      if (p1HullRef.current > 0 && p2HullRef.current > 0) {
-        targetCamX = (p1.x + p2.x) / 2;
-        targetCamY = (p1.y + p2.y) / 2;
-      } else if (p2HullRef.current > 0) {
-        targetCamX = p2.x;
-        targetCamY = p2.y;
+    playersRef.current.forEach(p => {
+      if (p.hull > 0) {
+        sumX += p.x;
+        sumY += p.y;
+        aliveCount++;
       }
+    });
+
+    let targetCamX = 0;
+    let targetCamY = 0;
+
+    if (aliveCount > 0) {
+      targetCamX = sumX / aliveCount;
+      targetCamY = sumY / aliveCount;
+    } else if (playersRef.current.length > 0) {
+      targetCamX = playersRef.current[0].x;
+      targetCamY = playersRef.current[0].y;
     }
 
     // Physical coordinate system camera center mappings
@@ -2304,8 +2144,8 @@ export default function App() {
     // --- A. PARALLAX STARFIELD RENDER ---
     starsRef.current.forEach(star => {
       // Loop star positions symmetrically so stars feel infinite
-      let sx = (star.x - p1.x * star.speed) % width;
-      let sy = (star.y - p1.y * star.speed) % height;
+      let sx = (star.x - targetCamX * star.speed) % width;
+      let sy = (star.y - targetCamY * star.speed) % height;
       if (sx < 0) sx += width;
       if (sy < 0) sy += height;
 
@@ -2711,24 +2551,21 @@ export default function App() {
       ctx.restore();
     };
 
-    // Render P1
-    if (p1HullRef.current > 0) {
-      drawPlayerShip(p1, 1, p1HullRef.current, shield, maxShieldRef.current);
-    } else if (gameModeRef.current === 'coop') {
-      drawPlayerShipWrecked(p1, 1, p1ReviveTimerRef.current);
-    }
-
-    // Render P2
-    if (gameModeRef.current === 'coop') {
-      if (p2HullRef.current > 0) {
-        drawPlayerShip(p2, 2, p2HullRef.current, p2ShieldRef.current, p2MaxShieldRef.current);
+    // Render all active players
+    playersRef.current.forEach(p => {
+      if (p.hull > 0) {
+        const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
+        drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
       } else {
-        drawPlayerShipWrecked(p2, 2, p2ReviveTimerRef.current);
+        // Render wrecked outline if multiple players are active
+        if (playersRef.current.length > 1) {
+          drawPlayerShipWrecked(p, p.playerNum, p.reviveTimer);
+        }
       }
-    }
+    });
 
     // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE (SUBTLY DRAW RANGE IN SCREEN CARD) ---
-    if (upgradesRef.current.magnetLevel > 1 && keysPressed.current['ShiftLeft']) {
+    if (upgradesRef.current.magnetLevel > 1 && (keysPressed.current['ShiftLeft'] || keysPressed.current['ShiftRight'])) {
       let drawMagnetRadius = 100;
       if (upgradesRef.current.magnetLevel === 2) drawMagnetRadius = 180;
       else if (upgradesRef.current.magnetLevel === 3) drawMagnetRadius = 260;
@@ -2736,15 +2573,18 @@ export default function App() {
       else if (upgradesRef.current.magnetLevel === 5) drawMagnetRadius = 1200;
       else if (upgradesRef.current.magnetLevel >= 6) drawMagnetRadius = 8000;
 
-      ctx.save();
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([6, 8]);
-      ctx.beginPath();
-      // Orbiting player 1
-      ctx.arc(p1.x - camX, p1.y - camY, drawMagnetRadius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([6, 8]);
+          ctx.beginPath();
+          ctx.arc(p.x - camX, p.y - camY, drawMagnetRadius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      });
     }
   };
 
@@ -2947,99 +2787,90 @@ export default function App() {
           </div>
 
           {/* BOTTOM ROW STATE METERS: Hull & Shields */}
-          <div className="w-full max-w-sm sm:max-w-xl mx-auto pointer-events-auto flex flex-col md:flex-row gap-3 md:gap-4 justify-center items-stretch select-none self-center">
-            
-            {/* Player 1 widgets widget */}
-            <div className="flex-1 bg-slate-950/9d border border-slate-850/90 p-3 sm:p-3.5 rounded-2xl shadow-xl space-y-2">
-              <span className="text-cyan-400 font-black text-[10px] uppercase tracking-wider block border-b border-slate-900 pb-1">🚀 Hráč 1 (Solo / P1)</span>
+          <div className="w-full max-w-sm sm:max-w-4xl mx-auto pointer-events-auto flex flex-wrap gap-3 md:gap-4 justify-center items-stretch select-none self-center">
+            {activePlayers.map(p => {
+              const pMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
+              const pMaxShield = 100 + (upgrades.shieldLevel - 1) * 35;
               
-              {/* Health (Hull) Bar */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[11px] font-mono">
-                  <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                    Trup lodi
-                  </span>
-                  <span className="text-orange-400 font-bold">{hull} / {maxHull} HP</span>
-                </div>
-                <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
-                  <div 
-                    className={`h-full transition-all duration-200 ${hull > 40 ? 'bg-orange-500' : 'bg-red-600 animate-pulse'}`}
-                    style={{ width: `${Math.max(0, (hull / maxHull) * 100)}%` }}
-                  />
-                </div>
-              </div>
+              const isKeyboard1 = p.inputSource === 'keyboard_p1';
+              const isKeyboard2 = p.inputSource === 'keyboard_p2';
+              const typeIcon = p.inputSource === 'gamepad' ? '🎮' : '⌨️';
 
-              {/* Shield Bar (if upgraded) */}
-              {upgrades.shieldLevel > 0 ? (
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[11px] font-mono">
-                    <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
-                      <Shield className="w-2.5 h-2.5 text-blue-400 fill-current" />
-                      Energetický štít
+              return (
+                <div 
+                  key={p.id} 
+                  className="flex-1 min-w-[200px] max-w-[320px] bg-slate-950/90 border p-3 sm:p-3.5 rounded-2xl shadow-xl space-y-2 relative group-item transition-all duration-300"
+                  style={{ borderColor: `${p.color}40`, boxShadow: `0 10px 25px -5px ${p.color}05` }}
+                >
+                  <div className="flex justify-between items-center border-b border-slate-900 pb-1">
+                    <span 
+                      className="font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5"
+                      style={{ color: p.color }}
+                    >
+                      {typeIcon} {p.name}
                     </span>
-                    <span className="text-blue-400 font-bold">{Math.round(shield)} / {maxShield} HP</span>
+                    <button
+                      onClick={() => leavePlayer(p.id)}
+                      className="text-slate-500 hover:text-red-400 text-[10px] cursor-pointer font-mono font-bold px-1.5 py-0.5 rounded hover:bg-red-950/40 transition-colors"
+                      title="Odpojit hráče ze hry"
+                    >
+                      Odpojit ×
+                    </button>
                   </div>
-                  <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
-                    <div 
-                      className="h-full bg-blue-400 transition-all duration-100 shadow-md shadow-blue-500/50"
-                      style={{ width: `${Math.max(0, (shield / maxShield) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="text-[9px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1 rounded-lg">
-                  Chybí Štíty
-                </div>
-              )}
-            </div>
-
-            {/* Player 2 widget (Only shown in coop mode) */}
-            {gameMode === 'coop' && (
-              <div className="flex-1 bg-slate-950/9d border border-purple-950/70 p-3 sm:p-3.5 rounded-2xl shadow-xl space-y-2 animate-fade-in">
-                <span className="text-purple-400 font-black text-[10px] uppercase tracking-wider block border-b border-slate-900 pb-1">🛸 Hráč 2 (P2)</span>
-                
-                {/* Health (Hull) Bar */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[11px] font-mono">
-                    <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                      Trup lodi
-                    </span>
-                    <span className="text-rose-400 font-bold">{p2Hull} / {p2MaxHull} HP</span>
-                  </div>
-                  <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-200 ${p2Hull > 40 ? 'bg-rose-500' : 'bg-red-600 animate-pulse'}`}
-                      style={{ width: `${Math.max(0, (p2Hull / p2MaxHull) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Shield Bar (if upgraded) */}
-                {upgrades.shieldLevel > 0 ? (
+                  
+                  {/* Health (Hull) Bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[11px] font-mono">
                       <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
-                        <Shield className="w-2.5 h-2.5 text-purple-400 fill-current" />
-                        Energetický štít
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: p.color }} />
+                        Trup lodi
                       </span>
-                      <span className="text-purple-400 font-bold">{Math.round(p2Shield)} / {p2MaxShield} HP</span>
+                      <span className="font-bold" style={{ color: p.color }}>
+                        {Math.round(p.hull)} / {pMaxHull} HP
+                      </span>
                     </div>
                     <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
                       <div 
-                        className="h-full bg-purple-400 transition-all duration-100 shadow-md shadow-purple-500/50"
-                        style={{ width: `${Math.max(0, (p2Shield / p2MaxShield) * 100)}%` }}
+                        className="h-full transition-all duration-200"
+                        style={{ 
+                          width: `${Math.max(0, (p.hull / pMaxHull) * 100)}%`,
+                          backgroundColor: p.color
+                        }}
                       />
                     </div>
                   </div>
-                ) : (
-                  <div className="text-[9px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1 rounded-lg">
-                    Chybí Štíty
-                  </div>
-                )}
-              </div>
-            )}
+
+                  {/* Shield Bar (if upgraded) */}
+                  {upgrades.shieldLevel > 0 ? (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px] font-mono">
+                        <span className="text-slate-400 flex items-center gap-1 uppercase font-bold text-[9px]">
+                          <Shield className="w-2.5 h-2.5 fill-current" style={{ color: p.glowColor }} />
+                          Energetický štít
+                        </span>
+                        <span className="font-bold" style={{ color: p.glowColor }}>
+                          {Math.round(p.shield)} / {pMaxShield} HP
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
+                        <div 
+                          className="h-full transition-all duration-100 shadow-md"
+                          style={{ 
+                            width: `${Math.max(0, (p.shield / pMaxShield) * 100)}%`,
+                            backgroundColor: p.glowColor,
+                            boxShadow: `0 0 6px ${p.glowColor}`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[9px] text-slate-500 text-center font-bold tracking-wider uppercase border border-dashed border-slate-800/80 py-1 rounded-lg">
+                      Chybí Štíty
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
           </div>
 
@@ -3098,61 +2929,47 @@ export default function App() {
               </div>
             </div>
 
-            {/* Fleet manual / controls details */}
-            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-2.5 text-left text-xs text-slate-300">
-              <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block">Letové operace lodi</span>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-slate-300 font-mono">
-                <div>• <b>Myš (pohyb):</b> Otáčení lodě</div>
-                <div>• <b>Klávesa [ W / S ]:</b> Plyn / Brzda</div>
-                <div>• <b>Klik / Mezerník:</b> Střelba</div>
-                <div>• <b>[ SHIFT ]:</b> Zobrazit dosah magnetu</div>
-              </div>
-              <p className="text-[11px] text-slate-400 italic pt-1.5 border-t border-slate-900 leading-normal">
-                <b>Fixed-Position mechanika:</b> Lodní trup je stabilně vystředěný na obrazovce, zatímco vesmírné prostředí drží koordinované posouvání, což ti dává maximální přehled nad nebe bez zbytečných okrajových mantinelů!
-              </p>
-            </div>
+            {/* Fleet drop-in configuration and controls */}
+            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-3.5 text-left text-xs">
+              <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block font-sans">🛸 SYSTÉM DYNAMICKÉHO PŘIPOJOVÁNÍ HRÁČŮ (DROP-IN)</span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-slate-300 font-mono">
+                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
+                  <span className="text-cyan-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 1 (KLÁVESNICE - ŠIPKY)</span>
+                  <p>• <b>Let vpřed:</b> Šipka nahoru</p>
+                  <p>• <b>Zpětný chod:</b> Šipka dolů</p>
+                  <p>• <b>Otáčení:</b> Šipka vlevo / vpravo</p>
+                  <p>• <b>Laser:</b> Pravý CTRL / Mezerník</p>
+                  <p>• <b>Dovednosti:</b> Čísla [ 7, 8, 9, 0 ]</p>
+                </div>
 
-            {/* Game mode selector */}
-            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-3 text-left">
-              <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block">Vyberte Herní Režim</span>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={() => setGameMode('single')}
-                  className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider border cursor-pointer select-none transition-all duration-200 flex items-center justify-center gap-2 ${
-                    gameMode === 'single'
-                      ? 'bg-cyan-950/50 border-cyan-500 text-cyan-400 shadow-lg shadow-cyan-950/50'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-300'
-                  }`}
-                  id="mode-select-single-btn"
-                >
-                  <User className="w-4 h-4 text-cyan-400" />
-                  Sólo Mise (1 hráč)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGameMode('coop')}
-                  className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider border cursor-pointer select-none transition-all duration-200 flex items-center justify-center gap-2 ${
-                    gameMode === 'coop'
-                      ? 'bg-purple-950/50 border-purple-500 text-purple-400 shadow-lg shadow-purple-950/50'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-300'
-                  }`}
-                  id="mode-select-coop-btn"
-                >
-                  <Users className="w-4 h-4 text-purple-400" />
-                  Kooperace (2 hráči)
-                </button>
+                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
+                  <span className="text-purple-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 2 (KLÁVESNICE - WASD)</span>
+                  <p>• <b>Let vpřed:</b> Klávesa [ W ]</p>
+                  <p>• <b>Zpětný chod:</b> Klávesa [ S ]</p>
+                  <p>• <b>Otáčení:</b> Klávesy [ A / D ]</p>
+                  <p>• <b>Laser:</b> Levý CTRL</p>
+                  <p>• <b>Dovednosti:</b> Čísla [ 1, 2, 3, 4 ]</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-850/80 text-[11px] text-slate-300 leading-relaxed font-sans">
+                <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-1 mb-1.5 text-[10px] uppercase">🎮 PILOTI NA OVLADAČÍCH (GAMEPADECH)</span>
+                <p>• Připojte USB nebo Bluetooth gamepad a stiskněte libovolné tlačítko.</p>
+                <p>• Ovladač se <b>automaticky přihlásí</b> jako nový nezávislý pilot přímo uprostřed akce!</p>
+                <p>• V průběhu hry se takto může připojit <b>libovolné množství hráčů</b> podle počtu gamepadů.</p>
+                <p>• Každého pilota lze odpojit tlačítkem v dolním panelu lodi.</p>
               </div>
 
               {/* Gamepad connection status detection */}
               {gamepadsDetected ? (
                 <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-mono bg-emerald-950/20 border border-emerald-900/30 px-3 py-1.5 rounded-lg">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Detekován herní ovladač (Gamepad)! Připraven pro obě lodi.</span>
+                  <span>Satelitní družice detekovala připojené herní ovladače (Gamepady)!</span>
                 </div>
               ) : (
-                <div className="text-[10px] text-slate-500 font-mono italic px-1">
-                  💡 Tip: Můžete zapojit USB/Bluetooth gamepad! Hra ho automaticky podporuje.
+                <div className="text-[10px] text-slate-500 font-mono italic px-1 pt-0.5">
+                  💡 Tip: Připojte Bluetooth/USB gamepady pro epickou hru s kamarády na jedné obrazovce!
                 </div>
               )}
             </div>
