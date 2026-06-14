@@ -1130,9 +1130,8 @@ export default function App() {
               isAnyLTPressed = true;
             }
 
-            if (isLTPressed) {
-              // Drift lock: disable standard steering
-            } else if (rightStickMagnitude > 0.22) {
+            // Allow steering even when accelerating with LT (disabled the drift lock bypass)
+            if (rightStickMagnitude > 0.22) {
               p.targetAngle = Math.atan2(rY, rX);
               let deltaAngle = p.targetAngle - p.angle;
               while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
