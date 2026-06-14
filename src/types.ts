@@ -26,6 +26,8 @@ export interface Asteroid {
   vertices: Vector2D[];
   color: string;
   points: number;
+  asteroidType?: 'common' | 'magma' | 'ice' | 'crystal';
+  tempState?: 'cold' | 'normal' | 'hot';
 }
 
 export interface Laser {
@@ -43,6 +45,7 @@ export interface Laser {
   color: string;
   lifetime: number;
   maxLifetime: number;
+  isHeated?: boolean;
 }
 
 export interface Ore {
@@ -85,6 +88,9 @@ export interface Upgrades {
   hullLevel: number;     // 1 to 5
   shieldLevel: number;   // 1 to 5
   engineLevel: number;   // 1 to 5
+  abilityLightningLevel: number;   // 0 to 3
+  abilityPulseLevel: number;       // 0 to 3
+  abilitySuperMagnetLevel: number; // 0 to 3
 }
 
 export interface PlayerStats {

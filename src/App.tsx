@@ -24,7 +24,8 @@ import {
   playShieldDownSound, 
   playUpgradeSound,
   getSoundState, 
-  toggleSound 
+  toggleSound,
+  updateEngineHum
 } from './utils/audio';
 import { 
   loadUpgrades, 
@@ -98,6 +99,12 @@ export default function App() {
   const [runDiamonds, setRunDiamonds] = useState<number>(0);
   const [runObsidian, setRunObsidian] = useState<number>(0);
 
+  // Active ability states for display in HUD (cooldowns in seconds, active time)
+  const [lightningCooldown, setLightningCooldown] = useState<number>(0);
+  const [pulseCooldown, setPulseCooldown] = useState<number>(0);
+  const [superMagnetCooldown, setSuperMagnetCooldown] = useState<number>(0);
+  const [superMagnetActive, setSuperMagnetActive] = useState<number>(0);
+
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
@@ -159,6 +166,11 @@ export default function App() {
   const maxHullRef = useRef<number>(100);
   const maxShieldRef = useRef<number>(0);
 
+  const lightningCooldownRef = useRef<number>(0);
+  const pulseCooldownRef = useRef<number>(0);
+  const superMagnetCooldownRef = useRef<number>(0);
+  const superMagnetActiveRef = useRef<number>(0);
+
   const p2MaxHullRef = useRef<number>(100);
   const p2MaxShieldRef = useRef<number>(0);
 
@@ -175,6 +187,9 @@ export default function App() {
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
+    if (!isPlaying) {
+      updateEngineHum(false);
+    }
   }, [isPlaying]);
 
   useEffect(() => {
@@ -262,6 +277,16 @@ export default function App() {
       keysPressed.current[code] = true;
       lastInputDeviceRef.current = 'keyboard';
 
+      if (isPlaying && !isShopOpen) {
+        if (code === 'KeyQ') {
+          triggerChainLightning(1);
+        } else if (code === 'KeyE') {
+          triggerPulseWaveRing(1);
+        } else if (code === 'KeyR') {
+          triggerSuperMagnetVacuum(1);
+        }
+      }
+
       // Prevent window scrolling with Arrow keys or Spacebar
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code) && isPlaying && !isShopOpen) {
         e.preventDefault();
@@ -342,6 +367,7 @@ export default function App() {
       window.removeEventListener('gamepaddisconnected', handleGamepadConnect);
       clearInterval(gamepadPollInterval);
       window.removeEventListener('resize', handleResize);
+      updateEngineHum(false);
     };
   }, [isPlaying, isShopOpen]);
 
@@ -367,7 +393,8 @@ export default function App() {
     customX?: number, 
     customY?: number, 
     customVx?: number, 
-    customVy?: number
+    customVy?: number,
+    forcedType?: 'common' | 'magma' | 'ice' | 'crystal'
   ): Asteroid => {
     let px = p1Ref.current.x;
     let py = p1Ref.current.y;
@@ -438,6 +465,28 @@ export default function App() {
       });
     }
 
+    let asteroidType: 'common' | 'magma' | 'ice' | 'crystal' = forcedType || 'common';
+    let color = ASTEROID_COLORS[size];
+
+    if (!forcedType) {
+      const typeRoll = Math.random();
+      if (typeRoll < 0.16) {
+        asteroidType = 'magma';
+      } else if (typeRoll < 0.32) {
+        asteroidType = 'ice';
+      } else if (typeRoll < 0.44) {
+        asteroidType = 'crystal';
+      }
+    }
+
+    if (asteroidType === 'magma') {
+      color = '#f97316'; // glowing fiery orange-red
+    } else if (asteroidType === 'ice') {
+      color = '#38bdf8'; // glowing ice cyan
+    } else if (asteroidType === 'crystal') {
+      color = '#a855f7'; // glowing psychic purple
+    }
+
     return {
       id: Math.random().toString(36).substring(2, 9),
       x,
@@ -451,8 +500,10 @@ export default function App() {
       maxHp: hp,
       radius,
       vertices,
-      color: ASTEROID_COLORS[size],
+      color,
       points,
+      asteroidType,
+      tempState: 'normal',
     };
   };
 
@@ -917,6 +968,7 @@ export default function App() {
 
     if (isShopOpenRef.current) {
       // Game paused, draw static elements but skip physics updates
+      updateEngineHum(false);
       drawGameScene();
       animationFrameId.current = requestAnimationFrame(tickGameLoop);
       return;
@@ -948,6 +1000,8 @@ export default function App() {
       }
     }
 
+    let isAnyLTPressed = false;
+
     // --- 1. PLAYER 1 INPUT PROCESS ---
     let handledP1Rotation = false;
 
@@ -961,15 +1015,24 @@ export default function App() {
         const rY = gamepad1.axes[3] || 0;
         const rightStickMagnitude = Math.hypot(rX, rY);
 
+        // Check if LT (Left Trigger, button 6) is pressed
+        const isLTPressed = gamepad1.buttons[6]?.pressed || (gamepad1.buttons[6]?.value || 0) > 0.15;
+        if (isLTPressed) {
+          isAnyLTPressed = true;
+        }
+
         // Gamepad intent detection
         const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
         const isAnyButtonActive = gamepad1.buttons.some(b => b.pressed);
-        if (isAnyAxisActive || isAnyButtonActive) {
+        if (isAnyAxisActive || isAnyButtonActive || isLTPressed) {
           lastInputDeviceRef.current = 'gamepad';
         }
 
         // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
-        if (rightStickMagnitude > 0.22) {
+        // If LT is pressed, disable rotation completely ('a vůbec se to neotacelo')
+        if (isLTPressed) {
+          handledP1Rotation = true;
+        } else if (rightStickMagnitude > 0.22) {
           const targetAngle = Math.atan2(rY, rX);
           p1.targetAngle = targetAngle;
           
@@ -986,13 +1049,33 @@ export default function App() {
         }
         
         // Thrust / Reverse
-        p1.thrusting = axisY < -0.18;
-        p1.reversing = axisY > 0.18;
+        if (isLTPressed) {
+          p1.thrusting = true;
+          p1.reversing = false;
+        } else {
+          p1.thrusting = axisY < -0.18;
+          p1.reversing = axisY > 0.18;
+        }
 
         // Fire
         const btnFire = gamepad1.buttons[0]?.pressed || gamepad1.buttons[7]?.pressed;
         if (btnFire) {
           fireActiveLaser(p1, 1);
+        }
+
+        // Active abilities bindings for gamepad1
+        const btnLightning1 = gamepad1.buttons[2]?.pressed || gamepad1.buttons[4]?.pressed; // X or LB
+        const btnPulse1 = gamepad1.buttons[1]?.pressed; // B
+        const btnSuperMagnet1 = gamepad1.buttons[3]?.pressed || gamepad1.buttons[5]?.pressed; // Y or RB
+
+        if (btnLightning1) {
+          triggerChainLightning(1);
+        }
+        if (btnPulse1) {
+          triggerPulseWaveRing(1);
+        }
+        if (btnSuperMagnet1) {
+          triggerSuperMagnetVacuum(1);
         }
       } else {
         // Keyboard input for Player 1
@@ -1044,15 +1127,24 @@ export default function App() {
           const rY = gamepad2.axes[3] || 0;
           const rightStickMagnitude = Math.hypot(rX, rY);
           
+          // Check if LT (Left Trigger, button 6) is pressed
+          const isLTPressed = gamepad2.buttons[6]?.pressed || (gamepad2.buttons[6]?.value || 0) > 0.15;
+          if (isLTPressed) {
+            isAnyLTPressed = true;
+          }
+
           // Gamepad intent detection
           const isAnyAxisActive = Math.abs(axisX) > 0.18 || Math.abs(axisY) > 0.18 || rightStickMagnitude > 0.22;
           const isAnyButtonActive = gamepad2.buttons.some(b => b.pressed);
-          if (isAnyAxisActive || isAnyButtonActive) {
+          if (isAnyAxisActive || isAnyButtonActive || isLTPressed) {
             lastInputDeviceRef.current = 'gamepad';
           }
 
           // Rotate ship: Prioritize right analog stick (absolute rotation) over left stick fallback
-          if (rightStickMagnitude > 0.22) {
+          // If LT is pressed, disable rotation completely ('a vůbec se to neotacelo')
+          if (isLTPressed) {
+            handledP2Rotation = true;
+          } else if (rightStickMagnitude > 0.22) {
             const targetAngle = Math.atan2(rY, rX);
             p2.targetAngle = targetAngle;
             
@@ -1069,13 +1161,33 @@ export default function App() {
           }
           
           // Thrust / Reverse
-          p2.thrusting = axisY < -0.18;
-          p2.reversing = axisY > 0.18;
+          if (isLTPressed) {
+            p2.thrusting = true;
+            p2.reversing = false;
+          } else {
+            p2.thrusting = axisY < -0.18;
+            p2.reversing = axisY > 0.18;
+          }
 
           // Fire
           const btnFire = gamepad2.buttons[0]?.pressed || gamepad2.buttons[7]?.pressed;
           if (btnFire) {
             fireActiveLaser(p2, 2);
+          }
+
+          // Active abilities bindings for gamepad2
+          const btnLightning2 = gamepad2.buttons[2]?.pressed || gamepad2.buttons[4]?.pressed; // X or LB
+          const btnPulse2 = gamepad2.buttons[1]?.pressed; // B
+          const btnSuperMagnet2 = gamepad2.buttons[3]?.pressed || gamepad2.buttons[5]?.pressed; // Y or RB
+
+          if (btnLightning2) {
+            triggerChainLightning(2);
+          }
+          if (btnPulse2) {
+            triggerPulseWaveRing(2);
+          }
+          if (btnSuperMagnet2) {
+            triggerSuperMagnetVacuum(2);
           }
         } else {
           // Keyboard inputs for Player 2
@@ -1104,6 +1216,8 @@ export default function App() {
         p2.reversing = false;
       }
     }
+
+    updateEngineHum(isAnyLTPressed);
 
     // --- 3. APPLY PHYSICAL SPEEDS ---
     const activePlayersNum = gameModeRef.current === 'coop' ? 2 : 1;
@@ -1316,6 +1430,50 @@ export default function App() {
       }
     }
 
+    // --- ACTIVE ABILITIES COOLDOWNS TICKING ---
+    if (lightningCooldownRef.current > 0) {
+      lightningCooldownRef.current--;
+      if (lightningCooldownRef.current % 15 === 0) {
+        setLightningCooldown(Math.ceil(lightningCooldownRef.current / 60));
+      }
+    } else {
+      setLightningCooldown(0);
+    }
+
+    if (pulseCooldownRef.current > 0) {
+      pulseCooldownRef.current--;
+      if (pulseCooldownRef.current % 15 === 0) {
+        setPulseCooldown(Math.ceil(pulseCooldownRef.current / 60));
+      }
+    } else {
+      setPulseCooldown(0);
+    }
+
+    if (superMagnetActiveRef.current > 0) {
+      superMagnetActiveRef.current--;
+      if (superMagnetActiveRef.current % 15 === 0) {
+        setSuperMagnetActive(Math.ceil(superMagnetActiveRef.current / 60));
+      }
+      if (superMagnetActiveRef.current === 0) {
+        setSuperMagnetActive(0);
+        // Start cooling down once active period finishes
+        const lvl = upgradesRef.current.abilitySuperMagnetLevel;
+        if (lvl > 0) {
+          superMagnetCooldownRef.current = 12 * 60; // 12s cooldown
+          setSuperMagnetCooldown(12);
+        }
+      }
+    } else {
+      if (superMagnetCooldownRef.current > 0) {
+        superMagnetCooldownRef.current--;
+        if (superMagnetCooldownRef.current % 15 === 0) {
+          setSuperMagnetCooldown(Math.ceil(superMagnetCooldownRef.current / 60));
+        }
+      } else {
+        setSuperMagnetCooldown(0);
+      }
+    }
+
     // --- 6. LASER FLIGHT & BOUNDS ---
     lasersRef.current = lasersRef.current.map(laser => {
       laser.x += laser.vx;
@@ -1332,6 +1490,13 @@ export default function App() {
     else if (upgradesRef.current.magnetLevel === 4) { magnetRadius = 340; magnetPullStrength = 0.44; }
     else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; }
     else if (upgradesRef.current.magnetLevel >= 6) { magnetRadius = 8000; magnetPullStrength = 1.95; }
+
+    // Donkey Keeper Super Magnet active capability overwrite
+    if (superMagnetActiveRef.current > 0) {
+      const lvl = upgradesRef.current.abilitySuperMagnetLevel;
+      magnetRadius = 99999;
+      magnetPullStrength = lvl === 3 ? 12.0 : lvl === 2 ? 6.0 : 3.5;
+    }
 
     oresRef.current = oresRef.current.map(ore => {
       // Find nearest active player as gravity center
@@ -1435,6 +1600,31 @@ export default function App() {
     });
 
     // --- 8. ASTEROID COLLISION DYNAMICS ---
+    // Donkey Keeper Gravity Chain: Crystal asteroids pull common ones nearby
+    asteroidsRef.current.forEach(cAst => {
+      if (cAst.asteroidType === 'crystal') {
+        asteroidsRef.current.forEach(oAst => {
+          if (oAst.id !== cAst.id && (oAst.asteroidType === 'common' || oAst.asteroidType === 'ice' || oAst.asteroidType === 'magma') && oAst.size !== 'huge') {
+            const dx = cAst.x - oAst.x;
+            const dy = cAst.y - oAst.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 300 && dist > 15) {
+              const pull = 0.035 * (1 - dist / 300); // attractive pulse push
+              oAst.vx += (dx / dist) * pull;
+              oAst.vy += (dy / dist) * pull;
+              
+              // Cap maximum speed of attracted rocks to keep them controllable
+              const speed = Math.hypot(oAst.vx, oAst.vy);
+              if (speed > 4.5) {
+                oAst.vx = (oAst.vx / speed) * 4.5;
+                oAst.vy = (oAst.vy / speed) * 4.5;
+              }
+            }
+          }
+        });
+      }
+    });
+
     asteroidsRef.current.forEach(asteroid => {
       asteroid.x += asteroid.vx;
       asteroid.y += asteroid.vy;
@@ -1474,7 +1664,18 @@ export default function App() {
         const radSum = laser.radius + asteroid.radius;
 
         if (ldx * ldx + ldy * ldy < radSum * radSum) {
-          asteroid.hp -= laser.damage;
+          let appliedDamage = laser.damage;
+          let isThermalShock = false;
+
+          if (asteroid.asteroidType === 'magma') {
+            laser.isHeated = true;
+            laser.color = '#f97316'; // heated orange laser
+          } else if (asteroid.asteroidType === 'ice' && laser.isHeated) {
+            isThermalShock = true;
+            appliedDamage = laser.damage * 2.2; // Thermal shock deals double plus bonus damage!
+          }
+
+          asteroid.hp -= appliedDamage;
           
           if (laser.isPiercing) {
             laser.piercedAsteroidIds.push(asteroid.id);
@@ -1484,7 +1685,13 @@ export default function App() {
             laser.lifetime = laser.maxLifetime;
           }
 
-          triggerOreSparkExplosion(laser.x, laser.y, '#ffffff');
+          if (isThermalShock) {
+            triggerComboSteamCloud(laser.x, laser.y);
+            addGainNotification("KOMBO: TEPLOTNÍ ŠOK! (2.2x Dmg)", "#38bdf8");
+            playExplosionSound('medium');
+          } else {
+            triggerOreSparkExplosion(laser.x, laser.y, asteroid.color || '#ffffff');
+          }
 
           if (asteroid.hp <= 0) {
             handleAsteroidBlowUp(asteroid);
@@ -1640,6 +1847,255 @@ export default function App() {
     animationFrameId.current = requestAnimationFrame(tickGameLoop);
   };
 
+  // --- DONKEY KEEPER ACTIVE ABILITIES & COMBO SYSTEMS ---
+  const triggerComboSteamCloud = (ox: number, oy: number) => {
+    for (let i = 0; i < 22; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 3.8 + 0.8;
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: ox,
+        y: oy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: Math.random() < 0.55 ? '#e2e8f0' : '#cbd5e1', // thick white/slate steam gray
+        size: Math.random() * 7.5 + 3.0,
+        alpha: 0.9,
+        lifetime: 0,
+        maxLifetime: 28 + Math.floor(Math.random() * 20),
+      });
+    }
+  };
+
+  const triggerChainExplosionWave = (ox: number, oy: number, radius: number, parentId: string) => {
+    // Fiery blast spark cloud
+    for (let i = 0; i < 25; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 4.5 + 1.2;
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: ox,
+        y: oy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: ['#f97316', '#ef4444', '#f97316', '#facc15', '#ffffff'][Math.floor(Math.random() * 5)],
+        size: Math.random() * 6.0 + 2.5,
+        alpha: 1.0,
+        lifetime: 0,
+        maxLifetime: 20 + Math.floor(Math.random() * 15),
+      });
+    }
+
+    // Radial damage to adjacent rocks
+    asteroidsRef.current.forEach(ast => {
+      if (ast.id !== parentId) {
+        const dx = ast.x - ox;
+        const dy = ast.y - oy;
+        const dist = Math.hypot(dx, dy);
+        if (dist < radius) {
+          const ratio = 1 - dist / radius;
+          const dmg = Math.round(12 * ratio);
+          if (dmg > 0) {
+            ast.hp -= dmg;
+
+            const pushA = Math.atan2(dy, dx);
+            ast.vx += Math.cos(pushA) * (4.5 * ratio);
+            ast.vy += Math.sin(pushA) * (4.5 * ratio);
+
+            if (ast.hp <= 0) {
+              setTimeout(() => {
+                const alive = asteroidsRef.current.some(a => a.id === ast.id);
+                if (alive) handleAsteroidBlowUp(ast);
+              }, 110);
+            } else {
+              playExplosionSound('small');
+            }
+          }
+        }
+      }
+    });
+  };
+
+  const triggerChainLightning = (playerNum: 1 | 2) => {
+    const lvl = upgradesRef.current.abilityLightningLevel;
+    if (lvl <= 0) return;
+
+    if (lightningCooldownRef.current > 0) return;
+
+    const p = playerNum === 1 ? p1Ref.current : p2Ref.current;
+    if (p.invulnerableTime > 0 && p1HullRef.current <= 0) return;
+
+    // Find nearest asteroid candidate in range
+    const searchLimit = 520;
+    let candidates = asteroidsRef.current.map(ast => {
+      const dx = ast.x - p.x;
+      const dy = ast.y - p.y;
+      return { ast, dist: Math.hypot(dx, dy) };
+    }).filter(c => c.dist < searchLimit)
+      .sort((a, b) => a.dist - b.dist);
+
+    if (candidates.length === 0) {
+      addGainNotification("ŽÁDNÝ ASTEROID NENÍ V DOSAHU BLESKU!", "#e11d48");
+      return;
+    }
+
+    // Activate lightning!
+    playLaserSound(2); // electrical discharge surge noise proxy
+    triggerOreSparkExplosion(p.x, p.y, '#facc15');
+
+    lightningCooldownRef.current = 7 * 60; // 7s cooldown
+    setLightningCooldown(7);
+
+    addGainNotification("KONCENTROVANÝ BLESK!", "#facc15");
+
+    const maxJumps = 3 + lvl * 2;
+    const dmg = 4 + lvl * 5;
+    
+    let sourceX = p.x;
+    let sourceY = p.y;
+    const hitIds: string[] = [];
+
+    for (let j = 0; j < maxJumps; j++) {
+      const nextC = candidates.find(c => !hitIds.includes(c.ast.id));
+      if (!nextC) break;
+
+      const target = nextC.ast;
+      hitIds.push(target.id);
+
+      // Hit target
+      target.hp -= dmg;
+
+      // Draw beautiful electrical lightning sparks along the path
+      const sx = sourceX;
+      const sy = sourceY;
+      const tx = target.x;
+      const ty = target.y;
+      const dist = Math.hypot(tx - sx, ty - sy);
+      const points = Math.max(5, Math.floor(dist / 12));
+
+      for (let k = 0; k <= points; k++) {
+        const ratio = k / points;
+        const pyX = -(ty - sy) / dist;
+        const pyY = (tx - sx) / dist;
+        const amplitude = (Math.random() * 12 - 6) * (1 - Math.abs(ratio - 0.5) * 1.5);
+
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: sx + (tx - sx) * ratio + pyX * amplitude,
+          y: sy + (ty - sy) * ratio + pyY * amplitude,
+          vx: (Math.random() * 0.4 - 0.2),
+          vy: (Math.random() * 0.4 - 0.2),
+          color: Math.random() < 0.3 ? '#ffffff' : '#facc15',
+          size: Math.random() * 2.8 + 1.2,
+          alpha: 1.0,
+          lifetime: 0,
+          maxLifetime: 10 + Math.floor(Math.random() * 12),
+        });
+      }
+
+      if (target.hp <= 0) {
+        setTimeout(() => {
+          const alive = asteroidsRef.current.some(a => a.id === target.id);
+          if (alive) handleAsteroidBlowUp(target);
+        }, 110);
+      } else {
+        triggerOreSparkExplosion(target.x, target.y, '#facc15');
+      }
+
+      sourceX = target.x;
+      sourceY = target.y;
+
+      // Re-sort candicates starting from current target position
+      candidates = candidates.map(c => {
+        const dx = c.ast.x - target.x;
+        const dy = c.ast.y - target.y;
+        return { ast: c.ast, dist: Math.hypot(dx, dy) };
+      }).sort((a, b) => a.dist - b.dist);
+    }
+  };
+
+  const triggerPulseWaveRing = (playerNum: 1 | 2) => {
+    const lvl = upgradesRef.current.abilityPulseLevel;
+    if (lvl <= 0) return;
+
+    if (pulseCooldownRef.current > 0) return;
+
+    const p = playerNum === 1 ? p1Ref.current : p2Ref.current;
+    if (p.invulnerableTime > 0 && p1HullRef.current <= 0) return;
+
+    pulseCooldownRef.current = 10 * 60; // 10s cooldown
+    setPulseCooldown(10);
+
+    playExplosionSound('medium');
+    addGainNotification("KINETICKÝ PULS!", "#818cf8");
+
+    const pulseRadius = 260 + lvl * 60;
+
+    // Circular particle wave ring visual display
+    for (let angle = 0; angle < Math.PI * 2; angle += 0.12) {
+      const speed = 4.0 + lvl * 1.5;
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: p.x,
+        y: p.y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: Math.random() < 0.4 ? '#ffffff' : '#818cf8',
+        size: Math.random() * 4.0 + 2.0,
+        alpha: 1.0,
+        lifetime: 0,
+        maxLifetime: 28 + lvl * 3,
+      });
+    }
+
+    // Physical push checking
+    asteroidsRef.current.forEach(ast => {
+      const dx = ast.x - p.x;
+      const dy = ast.y - p.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < pulseRadius && dist > 10) {
+        const ratio = 1 - dist / pulseRadius;
+        const pushForce = 8.0 + lvl * 4.5;
+        const pushAngle = Math.atan2(dy, dx);
+
+        ast.vx += Math.cos(pushAngle) * (pushForce * ratio);
+        ast.vy += Math.sin(pushAngle) * (pushForce * ratio);
+
+        const dmg = lvl * 4;
+        ast.hp -= dmg;
+
+        // Level 3 Donkey Keeper combo detonator!
+        if (lvl === 3 && (ast.asteroidType === 'magma' || ast.asteroidType === 'ice')) {
+          ast.hp = 0;
+        }
+
+        if (ast.hp <= 0) {
+          setTimeout(() => {
+            const alive = asteroidsRef.current.some(a => a.id === ast.id);
+            if (alive) handleAsteroidBlowUp(ast);
+          }, 85);
+        } else {
+          triggerOreSparkExplosion(ast.x, ast.y, '#818cf8');
+        }
+      }
+    });
+  };
+
+  const triggerSuperMagnetVacuum = (playerNum: 1 | 2) => {
+    const lvl = upgradesRef.current.abilitySuperMagnetLevel;
+    if (lvl <= 0) return;
+
+    if (superMagnetActiveRef.current > 0 || superMagnetCooldownRef.current > 0) return;
+
+    const durationSeconds = lvl === 3 ? 12 : lvl === 2 ? 8 : 5;
+    superMagnetActiveRef.current = durationSeconds * 60;
+    setSuperMagnetActive(durationSeconds);
+
+    playUpgradeSound();
+    addGainNotification("SUPER MAGNET: AKTIVOVÁN!", "#06b6d4");
+  };
+
   // --- ASTEROID DESTRUCTION & SUB-SPLIT MECHANIC ---
   const handleAsteroidBlowUp = (asteroid: Asteroid) => {
     playExplosionSound(asteroid.size);
@@ -1664,6 +2120,13 @@ export default function App() {
 
     // 3. Drop ores exactly at destroyed core center coordinate
     triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size);
+
+    // Donkey Keeper Magma Chain Explosion (Řetězová exploze)
+    if (asteroid.asteroidType === 'magma') {
+      const explRadius = asteroid.size === 'huge' ? 220 : asteroid.size === 'large' ? 170 : asteroid.size === 'medium' ? 120 : 80;
+      triggerChainExplosionWave(asteroid.x, asteroid.y, explRadius, asteroid.id);
+      addGainNotification("KOMBO: ŘETĚZOVÁ EXPLOZE!", "#f97316");
+    }
 
     // 4. Handle Sub-splits (Radial split)
     if (asteroid.size !== 'small') {
@@ -1698,7 +2161,7 @@ export default function App() {
         const spawnY = asteroid.y + Math.sin(radialAngle) * (asteroid.radius * 0.45);
 
         generatedShards.push(
-          createProceduralAsteroid(nextSize, spawnX, spawnY, vxShip, vyShip)
+          createProceduralAsteroid(nextSize, spawnX, spawnY, vxShip, vyShip, asteroid.asteroidType)
         );
       }
 
@@ -1970,8 +2433,19 @@ export default function App() {
       ctx.stroke();
 
       // Draw subtle cracks / geological veins
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-      ctx.lineWidth = 1;
+      if (ast.asteroidType === 'magma') {
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.85)';
+        ctx.lineWidth = 1.8;
+      } else if (ast.asteroidType === 'ice') {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+        ctx.lineWidth = 1.8;
+      } else if (ast.asteroidType === 'crystal') {
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)';
+        ctx.lineWidth = 1.8;
+      } else {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 1;
+      }
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.lineTo(ast.vertices[0].x * 0.4, ast.vertices[0].y * 0.4);
@@ -1998,6 +2472,44 @@ export default function App() {
 
       ctx.save();
       ctx.translate(sx, sy);
+
+      // Super Magnet Spinning Vortex VFX (Donkey Keeper)
+      if (superMagnetActiveRef.current > 0) {
+        ctx.save();
+        const spinAngle = Date.now() / 110;
+        ctx.lineWidth = 2.0;
+        ctx.shadowBlur = 10;
+        
+        // Helix 1: Cyan energy
+        ctx.strokeStyle = '#22d3ee';
+        ctx.shadowColor = '#22d3ee';
+        ctx.beginPath();
+        for (let j = 0; j < 50; j++) {
+          const theta = j * 0.22 + spinAngle;
+          const r = j * 1.1 + 16;
+          const vx = Math.cos(theta) * r;
+          const vy = Math.sin(theta) * r;
+          if (j === 0) ctx.moveTo(vx, vy);
+          else ctx.lineTo(vx, vy);
+        }
+        ctx.stroke();
+
+        // Helix 2: Purple energy
+        ctx.strokeStyle = '#a855f7';
+        ctx.shadowColor = '#a855f7';
+        ctx.beginPath();
+        for (let j = 0; j < 50; j++) {
+          const theta = j * 0.22 + spinAngle + Math.PI;
+          const r = j * 1.1 + 16;
+          const vx = Math.cos(theta) * r;
+          const vy = Math.sin(theta) * r;
+          if (j === 0) ctx.moveTo(vx, vy);
+          else ctx.lineTo(vx, vy);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.rotate(p.angle);
 
       const isFlashing = p.invulnerableTime > 0 && Math.floor(p.invulnerableTime / 4) % 2 === 0;
@@ -2320,6 +2832,71 @@ export default function App() {
               </div>
             </div>
 
+          </div>
+
+          {/* ACTIVE ABILITIES HUD (DONKEY KEEPER) */}
+          <div className="absolute left-4 bottom-28 pointer-events-auto flex flex-col gap-2 select-none">
+            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Aktivní Schopnosti (Obchod)</span>
+            <div className="flex gap-2">
+              {/* Ability 1: Chain Lightning (Q) */}
+              <div className={`relative flex items-center gap-2 px-3 py-2 border rounded-xl font-mono text-xs transition-all ${
+                upgrades.abilityLightningLevel > 0 
+                  ? 'bg-slate-950/90 border-amber-500/25 text-amber-300' 
+                  : 'bg-slate-950/40 border-slate-900/40 text-slate-600 opacity-40'
+              }`}>
+                <div className="flex items-center justify-center w-5 h-5 rounded bg-amber-500/15 text-amber-400 font-extrabold text-[10px]">Q</div>
+                <div className="flex flex-col">
+                  <span className="font-sans font-bold text-[11px] text-slate-200 leading-none">Řetězový blesk</span>
+                  <span className="text-[9px] text-slate-500 mt-0.5">Lvl {upgrades.abilityLightningLevel || 'Locked'}</span>
+                </div>
+                {lightningCooldown > 0 && (
+                  <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center font-bold text-red-500 border border-red-500/30">
+                    {lightningCooldown}s
+                  </div>
+                )}
+              </div>
+
+              {/* Ability 2: Kinetic Pulse (E) */}
+              <div className={`relative flex items-center gap-2 px-3 py-2 border rounded-xl font-mono text-xs transition-all ${
+                upgrades.abilityPulseLevel > 0 
+                  ? 'bg-slate-950/90 border-indigo-500/25 text-indigo-300' 
+                  : 'bg-slate-950/40 border-slate-900/40 text-slate-600 opacity-40'
+              }`}>
+                <div className="flex items-center justify-center w-5 h-5 rounded bg-indigo-500/15 text-indigo-400 font-extrabold text-[10px]">E</div>
+                <div className="flex flex-col">
+                  <span className="font-sans font-bold text-[11px] text-slate-200 leading-none">Kinetický puls</span>
+                  <span className="text-[9px] text-slate-500 mt-0.5">Lvl {upgrades.abilityPulseLevel || 'Locked'}</span>
+                </div>
+                {pulseCooldown > 0 && (
+                  <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center font-bold text-red-500 border border-red-500/30">
+                    {pulseCooldown}s
+                  </div>
+                )}
+              </div>
+
+              {/* Ability 3: Super Magnet (R) */}
+              <div className={`relative flex items-center gap-2 px-3 py-2 border rounded-xl font-mono text-xs transition-all ${
+                upgrades.abilitySuperMagnetLevel > 0 
+                  ? 'bg-slate-950/90 border-cyan-500/25 text-cyan-300' 
+                  : 'bg-slate-950/40 border-slate-900/40 text-slate-600 opacity-40'
+              }`}>
+                <div className="flex items-center justify-center w-5 h-5 rounded bg-cyan-500/15 text-cyan-400 font-extrabold text-[10px]">R</div>
+                <div className="flex flex-col">
+                  <span className="font-sans font-bold text-[11px] text-slate-200 leading-none">Super Vortex</span>
+                  <span className="text-[9px] text-slate-500 mt-0.5">Lvl {upgrades.abilitySuperMagnetLevel || 'Locked'}</span>
+                </div>
+                {superMagnetActive > 0 ? (
+                  <div className="absolute inset-0 bg-cyan-950/95 rounded-xl flex flex-col items-center justify-center font-bold text-cyan-300 border border-cyan-400 animate-pulse font-sans">
+                    <span className="text-[8px] uppercase tracking-wider text-cyan-400 font-extrabold leading-tight">AKTIVNÍ</span>
+                    <span>{superMagnetActive}s</span>
+                  </div>
+                ) : superMagnetCooldown > 0 ? (
+                  <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center font-bold text-red-500 border border-red-500/30">
+                    {superMagnetCooldown}s
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
 
           {/* RIGHT FLOATING QUICK GUIDE */}

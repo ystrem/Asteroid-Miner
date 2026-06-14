@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { Upgrades, PlayerStats } from '../types';
 import { playUpgradeSound } from '../utils/audio';
-import { Sparkles, Shield, Zap, Hammer, X, Gem, Star, Swords } from 'lucide-react';
+import { Sparkles, Shield, Zap, Hammer, X, Gem, Star, Swords, Waves } from 'lucide-react';
 
 interface UpgradeShopProps {
   upgrades: Upgrades;
@@ -48,7 +48,7 @@ export default function UpgradeShop({
   onRepair,
   onRechargeShield,
 }: UpgradeShopProps) {
-  const [activeTab, setActiveTab] = useState<'weapons' | 'defense' | 'utility' | 'repairs'>('weapons');
+  const [activeTab, setActiveTab] = useState<'weapons' | 'defense' | 'utility' | 'abilities' | 'repairs'>('weapons');
 
   if (!isOpen) return null;
 
@@ -238,6 +238,84 @@ export default function UpgradeShop({
         },
       ],
     },
+    {
+      id: 'abilityLightningLevel',
+      name: 'Řetězový blesk (Aktivní Q)',
+      description: 'Vystřelí silný elektrický výboj, který zasáhne nejbližší asteroid a přeskočí na další v okolí, čímž je roztříští.',
+      icon: <Zap className="w-5 h-5 text-yellow-400" id="icon-abl-lightning" />,
+      levels: [
+        {
+          level: 1,
+          title: 'Elektrický výboj',
+          description: 'Aktivuje schopnost. Vystřelí blesk na 1 asteroid s poškozením, který přeskočí na další 3 nejbližší.',
+          costs: { crystals: 150, diamonds: 2, obsidian: 0 },
+        },
+        {
+          level: 2,
+          title: 'Vysokofrekvenční ráz',
+          description: 'Blesk nyní zasáhne první cíl a přeskočí na 5 dalších, s dvojnásobným bous poškozením.',
+          costs: { crystals: 350, diamonds: 6, obsidian: 2 },
+        },
+        {
+          level: 3,
+          title: 'Kvantová bouře milénia',
+          description: 'Absolutní vyčištění! Blesk zasáhne cíl a přeskočí až na 8 dalších asteroidů s extrémní rázovou vlnou.',
+          costs: { crystals: 800, diamonds: 15, obsidian: 8 },
+        },
+      ],
+    },
+    {
+      id: 'abilityPulseLevel',
+      name: 'Kinetický puls (Aktivní E)',
+      description: 'Uvolní silnou rázovou vlnu ve tvaru prstence kolem lodi, která odhodí asteroidy a ochrání vás před obklíčením.',
+      icon: <Waves className="w-5 h-5 text-indigo-400" id="icon-abl-pulse" />,
+      levels: [
+        {
+          level: 1,
+          title: 'Silový puls',
+          description: 'Aktivuje rázovou vlnu odhazující všechny okolní asteroidy daleko ke krajům obrazovky.',
+          costs: { crystals: 100, diamonds: 1, obsidian: 0 },
+        },
+        {
+          level: 2,
+          title: 'Magnetická drtivá stěna',
+          description: 'Odhazuje asteroidy o 50 % větší silou a navíc jim způsobí poškození při odpálení.',
+          costs: { crystals: 250, diamonds: 4, obsidian: 1 },
+        },
+        {
+          level: 3,
+          title: 'Termonukleární otřes Wave',
+          description: 'Všechny odhozené asteroidy, které po odhození narazí nebo jsou velmi blízko, okamžitě vybuchnou.',
+          costs: { crystals: 600, diamonds: 10, obsidian: 5 },
+        },
+      ],
+    },
+    {
+      id: 'abilitySuperMagnetLevel',
+      name: 'Super magnet / Vortex (Aktivní R)',
+      description: 'Rozšíří gravitační dosah vašeho magnetu na celou obrazovku, což vám umožní instantně posbírat všechny suroviny.',
+      icon: <Sparkles className="w-5 h-5 text-cyan-400" id="icon-abl-magnet" />,
+      levels: [
+        {
+          level: 1,
+          title: 'Surovinová bouře',
+          description: 'Aktivuje schopnost. Na 5 sekund zvýší dosah přitažlivosti na celou herní plochu.',
+          costs: { crystals: 180, diamonds: 3, obsidian: 0 },
+        },
+        {
+          level: 2,
+          title: 'Tachyonový fázový vír',
+          description: 'Trvá 8 sekund a suroviny letí o 50 % rychleji. Přitahuje je koryty energetických drah.',
+          costs: { crystals: 400, diamonds: 8, obsidian: 2 },
+        },
+        {
+          level: 3,
+          title: 'Singularita Vacuum',
+          description: 'Trvá 12 sekund, omezuje herní tření, přitahuje suroviny bleskovou rychlostí (+150 %).',
+          costs: { crystals: 900, diamonds: 18, obsidian: 6 },
+        },
+      ],
+    },
   ];
 
   // Helper to determine if resources are sufficient
@@ -346,6 +424,17 @@ export default function UpgradeShop({
             id="tab-utility"
           >
             Sběr & Pohon
+          </button>
+          <button
+            onClick={() => setActiveTab('abilities')}
+            className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
+              activeTab === 'abilities'
+                ? 'bg-yellow-950/45 text-yellow-300 font-semibold border-b-2 border-yellow-500'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            id="tab-abilities"
+          >
+            Schopnosti
           </button>
           <button
             onClick={() => setActiveTab('repairs')}
@@ -477,6 +566,7 @@ export default function UpgradeShop({
                 if (activeTab === 'weapons') return item.id === 'laserLevel';
                 if (activeTab === 'defense') return item.id === 'hullLevel' || item.id === 'shieldLevel';
                 if (activeTab === 'utility') return item.id === 'magnetLevel' || item.id === 'engineLevel';
+                if (activeTab === 'abilities') return item.id === 'abilityLightningLevel' || item.id === 'abilityPulseLevel' || item.id === 'abilitySuperMagnetLevel';
                 return false;
               })
               .map((item) => {

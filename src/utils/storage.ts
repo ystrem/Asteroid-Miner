@@ -14,6 +14,9 @@ const DEFAULT_UPGRADES: Upgrades = {
   hullLevel: 1,
   shieldLevel: 0, // No shield by default
   engineLevel: 1,
+  abilityLightningLevel: 0,
+  abilityPulseLevel: 0,
+  abilitySuperMagnetLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {

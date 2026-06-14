@@ -32,6 +32,68 @@ export function getSoundState() {
   return isSoundEnabled;
 }
 
+// Stateful persistent engine hum properties
+let engineOsc: OscillatorNode | null = null;
+let engineOsc2: OscillatorNode | null = null;
+let engineFilter: BiquadFilterNode | null = null;
+let engineGain: GainNode | null = null;
+
+export function updateEngineHum(active: boolean) {
+  if (!isSoundEnabled) {
+    if (engineGain) {
+      try {
+        engineGain.gain.value = 0;
+      } catch (e) {}
+    }
+    return;
+  }
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    if (active) {
+      if (!engineOsc) {
+        engineOsc = ctx.createOscillator();
+        engineOsc2 = ctx.createOscillator();
+        engineFilter = ctx.createBiquadFilter();
+        engineGain = ctx.createGain();
+
+        // 55Hz (A1) sawtooth oscillator for heavy mechanical rumbling
+        engineOsc.type = 'sawtooth';
+        engineOsc.frequency.setValueAtTime(55, now);
+
+        // 110Hz (A2) triangle wave for warm harmonic depth
+        engineOsc2.type = 'triangle';
+        engineOsc2.frequency.setValueAtTime(110, now);
+
+        // Smooth out high-frequency rasp with a low-pass filter
+        engineFilter.type = 'lowpass';
+        engineFilter.frequency.setValueAtTime(125, now);
+
+        engineGain.gain.setValueAtTime(0.001, now);
+
+        engineOsc.connect(engineFilter);
+        engineOsc2.connect(engineFilter);
+        engineFilter.connect(engineGain);
+        engineGain.connect(ctx.destination);
+
+        engineOsc.start(now);
+        engineOsc2.start(now);
+      }
+
+      // Smooth rise with time constant 0.1 seconds
+      engineGain.gain.setTargetAtTime(0.18, now, 0.1);
+    } else {
+      if (engineGain) {
+        // Smooth fade out with time constant 0.15 seconds
+        engineGain.gain.setTargetAtTime(0, now, 0.15);
+      }
+    }
+  } catch (e) {
+    // Audio context might be suspended or not yet interacted by user, skip gracefully
+  }
+}
+
 export function playLaserSound(level: number) {
   if (!isSoundEnabled) return;
   try {
