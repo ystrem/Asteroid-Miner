@@ -125,4 +125,38 @@ export interface Player {
   name: string;
   inputSource: 'keyboard_p1' | 'keyboard_p2' | 'gamepad';
   gamepadIndex: number | null;
+  // Dynamic Brainstorm Mechanics
+  anchoredAsteroidId?: string;
+  anchorAngle?: number;
+  anchorRadius?: number;
+  isDrilling?: boolean;
+  drillTime?: number;
 }
+
+export interface Pirate {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+  lastFired: number;
+  color: string;
+}
+
+export interface PirateLaser {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  radius: number;
+  color: string;
+  lifetime: number;
+  maxLifetime: number;
+}
+

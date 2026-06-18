@@ -15,7 +15,9 @@ import {
   PlayerStats,
   AsteroidSize,
   OreType,
-  Player
+  Player,
+  Pirate,
+  PirateLaser
 } from './types';
 import { 
   playLaserSound, 
@@ -152,6 +154,60 @@ export default function App() {
   const superMagnetActiveRef = useRef<number>(0);
 
   const gameModeRef = useRef<'single' | 'coop'>('single');
+
+  // Brainstorm mechanics states & refs
+  const [solarStormActive, setSolarStormActive] = useState<boolean>(false);
+  const [solarStormWarning, setSolarStormWarning] = useState<number>(0);
+  const solarStormActiveRef = useRef<boolean>(false);
+  const solarStormTimeRef = useRef<number>(1500); // Ticks until next storm warning/check
+  const solarStormDurationRef = useRef<number>(0); // Duration of active storm
+  const solarStormDirectionRef = useRef<number>(Math.PI / 2); // Downward wind (pi/2)
+
+  const piratesRef = useRef<Pirate[]>([]);
+  const pirateLasersRef = useRef<PirateLaser[]>([]);
+  const lastGamepadButtonsRef = useRef<{ [key: string]: boolean }>({});
+  const keyboardOrMousePressedRef = useRef<boolean>(false);
+  const gamepadOnlyStartRef = useRef<number | null>(null);
+
+  const toggleAnchor = (p: Player) => {
+    if (p.anchoredAsteroidId) {
+      p.anchoredAsteroidId = undefined;
+      p.isDrilling = false;
+      addGainNotification(`🔌 ${p.name} UVOLNIL KOTVU`, p.color);
+      playExplosionSound('small');
+      return;
+    }
+
+    // Find closest anchorable asteroid
+    let closestAst: Asteroid | null = null;
+    let minDist = 999999;
+    asteroidsRef.current.forEach(ast => {
+      const dist = Math.hypot(p.x - ast.x, p.y - ast.y);
+      if (dist < minDist) {
+        minDist = dist;
+        closestAst = ast;
+      }
+    });
+
+    if (closestAst) {
+      const ast = closestAst as Asteroid;
+      const margin = ast.radius + p.radius + 35;
+      if (minDist <= margin) {
+        p.anchoredAsteroidId = ast.id;
+        p.anchorRadius = minDist;
+        // Keep angle delta relative to current asteroid spin
+        p.anchorAngle = Math.atan2(p.y - ast.y, p.x - ast.x) - ast.angle;
+        p.isDrilling = true;
+        p.drillTime = 0;
+        addGainNotification(`🔗 ${p.name} SE PŘICHYTIL K ASTEROIDU`, p.color);
+        playUpgradeSound();
+        triggerOreSparkExplosion(p.x, p.y, p.color);
+      } else {
+        addGainNotification(`❌ PŘÍLIŠ DALEKO PRO KOTVENÍ`, '#64748b');
+      }
+    }
+  };
+
 
   // Synchronize state values to refs inside effect
   useEffect(() => {
@@ -311,10 +367,11 @@ export default function App() {
       const code = e.code;
       keysPressed.current[code] = true;
       lastInputDeviceRef.current = 'keyboard';
+      keyboardOrMousePressedRef.current = true;
 
       if (isPlaying && !isShopOpen) {
         // Dynamic drop-in detection for Player 1 (Keyboard Arrows)
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlRight', 'Digit7', 'Digit8', 'Digit9'].includes(code)) {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlRight', 'Digit7', 'Digit8', 'Digit9', 'KeyH', 'Digit0', 'Numpad0'].includes(code)) {
           const hasP1 = playersRef.current.some(p => p.inputSource === 'keyboard_p1');
           if (!hasP1) {
             joinPlayer('keyboard_p1');
@@ -322,11 +379,21 @@ export default function App() {
         }
 
         // Dynamic drop-in detection for Player 2 (Keyboard WASD)
-        if (['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ControlLeft', 'Digit1', 'Digit2', 'Digit3'].includes(code)) {
+        if (['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ControlLeft', 'Digit1', 'Digit2', 'Digit3', 'KeyG', 'Digit4', 'Numpad4'].includes(code)) {
           const hasP2 = playersRef.current.some(p => p.inputSource === 'keyboard_p2');
           if (!hasP2) {
             joinPlayer('keyboard_p2');
           }
+        }
+
+        // Anchor keys triggers
+        if (code === 'KeyH' || code === 'Digit0' || code === 'Numpad0') {
+          const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+          if (p1) toggleAnchor(p1);
+        }
+        if (code === 'KeyG' || code === 'Digit4' || code === 'Numpad4') {
+          const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+          if (p2) toggleAnchor(p2);
         }
 
         // Ability bindings based on player associations
@@ -363,6 +430,7 @@ export default function App() {
     const handleKeyUp = (e: KeyboardEvent) => {
       keysPressed.current[e.code] = false;
       lastInputDeviceRef.current = 'keyboard';
+      keyboardOrMousePressedRef.current = true;
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -370,6 +438,7 @@ export default function App() {
       const dy = e.clientY - mousePos.current.y;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
         lastInputDeviceRef.current = 'keyboard';
+        keyboardOrMousePressedRef.current = true;
       }
       mousePos.current = { x: e.clientX, y: e.clientY };
     };
@@ -377,11 +446,13 @@ export default function App() {
     const handleMouseDown = () => {
       keysPressed.current['MouseDown'] = true;
       lastInputDeviceRef.current = 'keyboard';
+      keyboardOrMousePressedRef.current = true;
     };
 
     const handleMouseUp = () => {
       keysPressed.current['MouseDown'] = false;
       lastInputDeviceRef.current = 'keyboard';
+      keyboardOrMousePressedRef.current = true;
     };
 
     const handleGamepadConnect = () => {
@@ -412,6 +483,24 @@ export default function App() {
     // Periodically poll for gamepads to ensure absolute reliability
     const gamepadPollInterval = setInterval(handleGamepadConnect, 1000);
 
+    // Rapidly poll gamepads when in intro menu to support gamepad-only startup
+    const introGamepadPollInterval = setInterval(() => {
+      if (!isPlayingRef.current) {
+        const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          const gp = gamepads[i];
+          if (gp) {
+            const anyButtonPressed = gp.buttons.some(b => b.pressed);
+            if (anyButtonPressed) {
+              gamepadOnlyStartRef.current = i;
+              handleStartGame();
+              break;
+            }
+          }
+        }
+      }
+    }, 50);
+
     // Initial stars generation
     generateStarfield();
 
@@ -433,6 +522,7 @@ export default function App() {
       window.removeEventListener('gamepadconnected', handleGamepadConnect);
       window.removeEventListener('gamepaddisconnected', handleGamepadConnect);
       clearInterval(gamepadPollInterval);
+      clearInterval(introGamepadPollInterval);
       window.removeEventListener('resize', handleResize);
       updateEngineHum(false);
     };
@@ -626,38 +716,16 @@ export default function App() {
     // Re-initialize player locations and statuses
     playersRef.current = [];
 
-    const p1: Player = {
-      playerNum: 1,
-      id: 'keyboard_p1_',
-      x: gameMode === 'coop' ? -60 : 0,
-      y: 0,
-      vx: 0,
-      vy: 0,
-      angle: -Math.PI / 2,
-      targetAngle: -Math.PI / 2,
-      thrusting: false,
-      reversing: false,
-      radius: 20,
-      invulnerableTime: 60,
-      lastFired: 0,
-      hull: calculatedMaxHull,
-      maxHull: calculatedMaxHull,
-      shield: calculatedMaxShield,
-      maxShield: calculatedMaxShield,
-      reviveTimer: 0,
-      color: '#22d3ee', // Cyan
-      glowColor: '#60a5fa',
-      name: 'Hráč 1 (P_Aktivní)',
-      inputSource: 'keyboard_p1',
-      gamepadIndex: null
-    };
-    playersRef.current.push(p1);
+    if (gamepadOnlyStartRef.current !== null) {
+      const i = gamepadOnlyStartRef.current;
+      const pColor = i === 0 ? '#fb923c' : '#4ade80';
+      const pGlow = i === 0 ? '#f97316' : '#22c55e';
+      const pName = `Hráč 1 (Ovladač ${i + 1})`;
 
-    if (gameMode === 'coop') {
-      const p2: Player = {
-        playerNum: 2,
-        id: 'keyboard_p2_',
-        x: 60,
+      const pGamepad: Player = {
+        playerNum: 1,
+        id: `gamepad_${i}`,
+        x: 0,
         y: 0,
         vx: 0,
         vy: 0,
@@ -673,14 +741,74 @@ export default function App() {
         shield: calculatedMaxShield,
         maxShield: calculatedMaxShield,
         reviveTimer: 0,
-        color: '#c084fc', // Purple
-        glowColor: '#a855f7',
-        name: 'Hráč 2 (P_WASD)',
-        inputSource: 'keyboard_p2',
+        color: pColor,
+        glowColor: pGlow,
+        name: pName,
+        inputSource: 'gamepad',
+        gamepadIndex: i
+      };
+      playersRef.current.push(pGamepad);
+    } else {
+      const p1: Player = {
+        playerNum: 1,
+        id: 'keyboard_p1_',
+        x: gameMode === 'coop' ? -60 : 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        targetAngle: -Math.PI / 2,
+        thrusting: false,
+        reversing: false,
+        radius: 20,
+        invulnerableTime: 60,
+        lastFired: 0,
+        hull: calculatedMaxHull,
+        maxHull: calculatedMaxHull,
+        shield: calculatedMaxShield,
+        maxShield: calculatedMaxShield,
+        reviveTimer: 0,
+        color: '#22d3ee', // Cyan
+        glowColor: '#60a5fa',
+        name: 'Hráč 1 (P_Aktivní)',
+        inputSource: 'keyboard_p1',
         gamepadIndex: null
       };
-      playersRef.current.push(p2);
+      playersRef.current.push(p1);
+
+      if (gameMode === 'coop') {
+        const p2: Player = {
+          playerNum: 2,
+          id: 'keyboard_p2_',
+          x: 60,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          angle: -Math.PI / 2,
+          targetAngle: -Math.PI / 2,
+          thrusting: false,
+          reversing: false,
+          radius: 20,
+          invulnerableTime: 60,
+          lastFired: 0,
+          hull: calculatedMaxHull,
+          maxHull: calculatedMaxHull,
+          shield: calculatedMaxShield,
+          maxShield: calculatedMaxShield,
+          reviveTimer: 0,
+          color: '#c084fc', // Purple
+          glowColor: '#a855f7',
+          name: 'Hráč 2 (P_WASD)',
+          inputSource: 'keyboard_p2',
+          gamepadIndex: null
+        };
+        playersRef.current.push(p2);
+      }
     }
+
+    // Reset tracking refs for a clean run
+    gamepadOnlyStartRef.current = null;
+    keyboardOrMousePressedRef.current = false;
 
     setActivePlayers([...playersRef.current]);
 
@@ -689,6 +817,12 @@ export default function App() {
     lasersRef.current = [];
     oresRef.current = [];
     particlesRef.current = [];
+    piratesRef.current = [];
+    pirateLasersRef.current = [];
+    setSolarStormActive(false);
+    solarStormActiveRef.current = false;
+    solarStormTimeRef.current = 1500;
+    solarStormDurationRef.current = 0;
 
     // Populate asteroid cloud
     populateAsteroidBelt(15);
@@ -732,8 +866,19 @@ export default function App() {
     setStats(updatedStats);
     saveStats(updatedStats);
 
-    setHull(maxHull);
-    addGainNotification('TRUP PLNĚ RESUSTAVEN (100%)', '#10b981');
+    const calculatedMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
+
+    setHull(calculatedMaxHull);
+    setP2Hull(calculatedMaxHull);
+
+    playersRef.current.forEach(p => {
+      p.hull = calculatedMaxHull;
+      p.reviveTimer = 0; // stop death timer and revive fully
+    });
+
+    setActivePlayers([...playersRef.current]);
+
+    addGainNotification('TRUPY CELÉ LETKY PLNĚ OPRAVENY (100%)', '#10b981');
     playUpgradeSound();
   };
 
@@ -1067,16 +1212,30 @@ export default function App() {
     const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
 
     // Check connected gamepads to see if any button is pressed — if so, drop them in!
+    let anyGamepadButtonPressed = false;
+    let pressedGamepadIdx = -1;
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (gp) {
         const anyButtonPressed = gp.buttons.some(b => b.pressed);
         if (anyButtonPressed) {
+          anyGamepadButtonPressed = true;
+          pressedGamepadIdx = i;
           const alreadyJoined = playersRef.current.some(pl => pl.inputSource === 'gamepad' && pl.gamepadIndex === i);
           if (!alreadyJoined) {
             joinPlayer('gamepad', i);
           }
         }
+      }
+    }
+
+    // A když NEmáčkneš jakékoli tlačítko na myši nebo klávesnici, a stiskne se tlačítko na gamepadu, tak hraje jenom na gamepadu.
+    if (anyGamepadButtonPressed && !keyboardOrMousePressedRef.current) {
+      const hasKeyboardPlayers = playersRef.current.some(p => p.inputSource === 'keyboard_p1' || p.inputSource === 'keyboard_p2');
+      if (hasKeyboardPlayers) {
+        playersRef.current = playersRef.current.filter(p => p.inputSource !== 'keyboard_p1' && p.inputSource !== 'keyboard_p2');
+        setActivePlayers([...playersRef.current]);
+        addGainNotification('🎮 EXPEDICE PŘEPNUTA: HRAJE VÝHRADNĚ GAMEPAD!', '#fb923c');
       }
     }
 
@@ -1119,8 +1278,6 @@ export default function App() {
         else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
           const gp = gamepads[p.gamepadIndex];
           if (gp) {
-            const axisX = gp.axes[0];
-            const axisY = gp.axes[1];
             const rX = gp.axes[2] || 0;
             const rY = gp.axes[3] || 0;
             const rightStickMagnitude = Math.hypot(rX, rY);
@@ -1138,15 +1295,13 @@ export default function App() {
               while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
               const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
               p.angle += deltaAngle * Math.min(1, rotSpeed);
-            } else if (Math.abs(axisX) > 0.18) {
-              p.angle += axisX * 0.08;
             }
 
             if (isLTPressed) {
               p.thrusting = true;
             } else {
-              p.thrusting = axisY < -0.18;
-              p.reversing = axisY > 0.15;
+              p.thrusting = false;
+              p.reversing = false;
             }
 
             const btnFire = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed;
@@ -1163,6 +1318,15 @@ export default function App() {
             if (gp.buttons[3]?.pressed || gp.buttons[5]?.pressed) {
               triggerSuperMagnetVacuum(p.playerNum);
             }
+
+            // Gamepad anchoring triggers (Stick Click, D-Pad Down, Select)
+            const btnAnchor = gp.buttons[10]?.pressed || gp.buttons[11]?.pressed || gp.buttons[13]?.pressed || gp.buttons[8]?.pressed;
+            const btnKey = `gp_${p.gamepadIndex || 0}_anchor`;
+            const wasAnchorPressed = !!lastGamepadButtonsRef.current[btnKey];
+            if (btnAnchor && !wasAnchorPressed) {
+              toggleAnchor(p);
+            }
+            lastGamepadButtonsRef.current[btnKey] = !!btnAnchor;
           }
         }
       }
@@ -1172,7 +1336,116 @@ export default function App() {
 
     // --- APPLY PHYSICAL MOVEMENT SPEEDS AND DECELERATION ---
     playersRef.current.forEach(p => {
-      if (p.hull > 0) {
+      // If player is dead, reset anchoring!
+      if (p.hull <= 0) {
+        p.anchoredAsteroidId = undefined;
+        p.isDrilling = false;
+      }
+
+      if (p.hull > 0 && p.anchoredAsteroidId) {
+        const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
+        if (!asteroid) {
+          // Asteroid was destroyed or is missing! unanchor!
+          p.anchoredAsteroidId = undefined;
+          p.isDrilling = false;
+        } else {
+          // Anchored movement & rotation!
+          p.vx = asteroid.vx;
+          p.vy = asteroid.vy;
+          
+          // Compute ship position based on current asteroid coordinates, radius and rotation angle!
+          p.x = asteroid.x + Math.cos(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
+          p.y = asteroid.y + Math.sin(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
+          
+          // Optional: ship points outward or synchronizes with asteroid angle
+          p.angle = asteroid.angle + (p.anchorAngle || 0);
+
+          // DRILLING CYCLE
+          if (p.isDrilling) {
+            p.drillTime = (p.drillTime || 0) + 1;
+            // Spawn spark/soil particles flying from the drill contact point!
+            if (Math.random() < 0.4) {
+              const sparkAngle = p.angle + Math.PI + (Math.random() * 0.8 - 0.4);
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x,
+                y: p.y,
+                vx: Math.cos(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vx,
+                vy: Math.sin(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vy,
+                color: asteroid.color || '#ffffff',
+                size: Math.random() * 3 + 1,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 15 + Math.floor(Math.random() * 10)
+              });
+            }
+
+            // Every 75 frames (approx 1.25s), extract resources directly from the core!
+            if (p.drillTime >= 75) {
+              p.drillTime = 0;
+              // Extract ore based on asteroid type!
+              let oreType: OreType = 'crystal';
+              let amount = 1;
+              let txt = `+1 Krystal`;
+              let col = '#38bdf8';
+
+              if (asteroid.asteroidType === 'crystal') {
+                oreType = 'crystal';
+                amount = Math.random() < 0.4 ? 4 : 2;
+                txt = `+${amount} Společné Krystaly`;
+                col = '#c084fc';
+              } else if (asteroid.asteroidType === 'ice') {
+                oreType = 'diamond';
+                amount = 1;
+                txt = `+1 Vzácný Diamant`;
+                col = '#60a5fa';
+              } else if (asteroid.asteroidType === 'magma') {
+                oreType = 'obsidian';
+                amount = 1;
+                txt = `+1 Fialový Obsidián`;
+                col = '#f43f5e';
+              } else {
+                // Common
+                if (Math.random() < 0.15 && upgradesRef.current.magnetLevel >= 3) {
+                  oreType = 'diamond';
+                  txt = `+1 Vzácný Diamant`;
+                  col = '#60a5fa';
+                } else {
+                  oreType = 'crystal';
+                  amount = 1;
+                  txt = `+1 Krystal`;
+                  col = '#38bdf8';
+                }
+              }
+
+              // Award resource to running stats
+              if (oreType === 'crystal') {
+                setRunCrystals(prev => prev + amount);
+              } else if (oreType === 'diamond') {
+                setRunDiamonds(prev => prev + amount);
+              } else if (oreType === 'obsidian') {
+                setRunObsidian(prev => prev + amount);
+              }
+
+              addGainNotification(txt, col);
+              playCollectSound(oreType);
+              
+              // Damage asteroid HP slowly during deep drilling!
+              asteroid.hp -= 15;
+              if (asteroid.hp <= 0) {
+                // Destroy asteroid cleanly!
+                p.anchoredAsteroidId = undefined;
+                p.isDrilling = false;
+                triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size);
+                // Also award player some extra points/crystals
+                setCurrentScore(prev => prev + asteroid.points);
+                playExplosionSound(asteroid.size);
+                asteroidsRef.current = asteroidsRef.current.filter(a => a.id !== asteroid.id);
+              }
+            }
+          }
+        }
+      } else if (p.hull > 0) {
         const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
         const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
         const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
@@ -1218,8 +1491,10 @@ export default function App() {
         p.vy *= 0.96;
       }
 
-      p.x += p.vx;
-      p.y += p.vy;
+      if (!p.anchoredAsteroidId) {
+        p.x += p.vx;
+        p.y += p.vy;
+      }
 
       if (p.invulnerableTime > 0) {
         p.invulnerableTime--;
@@ -1326,6 +1601,232 @@ export default function App() {
         }
       }
     });
+
+    // --- UPDATE SOLAR STROM PROCESSES ---
+    if (solarStormDurationRef.current > 0) {
+      solarStormDurationRef.current--;
+      if (solarStormDurationRef.current <= 0) {
+        solarStormActiveRef.current = false;
+        setSolarStormActive(false);
+        addGainNotification("🌤️ SOLÁRNÍ BOUŘE SKONČILA", "#10b981");
+        // Reset next storm timer (approx 35s to 60s cooldown)
+        solarStormTimeRef.current = 2100 + Math.floor(Math.random() * 1500);
+      } else {
+        // Active solar storm phase!
+        // Spawn streaming solar radiation wind particles!
+        if (Math.random() < 0.6) {
+          const windAngle = solarStormDirectionRef.current;
+          const camX = lastCamXRef.current;
+          const camY = lastCamYRef.current;
+          // Spawn near viewport edges
+          const spawnX = camX + (Math.random() * width - width / 2) - Math.cos(windAngle) * 500;
+          const spawnY = camY + (Math.random() * height - height / 2) - Math.sin(windAngle) * 500;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: spawnX,
+            y: spawnY,
+            vx: Math.cos(windAngle) * (Math.random() * 8 + 4),
+            vy: Math.sin(windAngle) * (Math.random() * 8 + 4),
+            color: Math.random() < 0.5 ? '#f59e0b' : '#ef4444', // Orange/Red solar particles
+            size: Math.random() * 2.5 + 1.0,
+            alpha: 0.8,
+            lifetime: 0,
+            maxLifetime: 100
+          });
+        }
+
+        // Damage calculation for players! Every 45 frames (0.75s), check if players are safe or hit
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            if (p.invulnerableTime > 0) return;
+            
+            // Checking if player is shadowed behind ANY large / huge asteroid relative to wind direction!
+            let isShadowed = false;
+            const windDirX = Math.cos(solarStormDirectionRef.current);
+            const windDirY = Math.sin(solarStormDirectionRef.current);
+
+            // Anchored and deep drilling rock provides excellent insulation!
+            if (p.anchoredAsteroidId) {
+              isShadowed = true; 
+            } else {
+              asteroidsRef.current.forEach(ast => {
+                if (ast.size === 'huge' || ast.size === 'large') {
+                  const dx = p.x - ast.x;
+                  const dy = p.y - ast.y;
+                  const distToAst = Math.hypot(dx, dy);
+                  
+                  // Safe distance - close behind the asteroid
+                  if (distToAst < ast.radius * 2.5) {
+                    // Check projection along wind direction:
+                    const proj = (dx * windDirX + dy * windDirY) / distToAst;
+                    if (proj > 0.72) { // Angle within shadow cone
+                      isShadowed = true;
+                    }
+                  }
+                }
+              });
+            }
+
+            if (!isShadowed) {
+              // Apply radiation damage!
+              if (solarStormDurationRef.current % 45 === 0) {
+                if (p.shield > 0) {
+                  p.shield = Math.max(0, p.shield - 8);
+                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA ŠTÍT!`, '#fb923c');
+                  playDamageSound();
+                } else {
+                  p.hull = Math.max(0, p.hull - 5);
+                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA TRUP!`, '#ef4444');
+                  playDamageSound();
+                  
+                  if (p.hull <= 0) {
+                    addGainNotification(`💀 ${p.name} ZNIČEN RADIACÍ!`, '#ef4444');
+                    triggerShipCatastrophicFailure();
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+    } else {
+      // Normal countdown phases
+      if (solarStormTimeRef.current > 0) {
+        solarStormTimeRef.current--;
+        // Show warning message when storm gets near (less than 15 seconds / 900 frames)
+        if (solarStormTimeRef.current <= 900 && solarStormTimeRef.current % 60 === 0) {
+          const secs = Math.ceil(solarStormTimeRef.current / 60);
+          setSolarStormWarning(secs);
+        }
+      } else {
+        // Start the storm!
+        solarStormActiveRef.current = true;
+        setSolarStormActive(true);
+        setSolarStormWarning(0);
+        solarStormDirectionRef.current = Math.PI * 0.4 + Math.random() * Math.PI * 0.2; // mostly downward wind
+        solarStormDurationRef.current = 600 + Math.floor(Math.random() * 600); // 10 to 20 seconds duration
+        addGainNotification("🚨 SOLÁRNÍ BOUŘE ZAČALA! Hledej stín za velkými asteroidy!", "#f59e0b");
+        playExplosionSound('huge');
+      }
+    }
+
+    // --- COSMIC PIRATES SPAWN AND TICK ENGINE ---
+    // Spawn chance: if random check succeeds and isPlaying and pirates counts < 2
+    if (Math.random() < 0.0025 && piratesRef.current.length < 2) {
+      const pX = lastCamXRef.current;
+      const pY = lastCamYRef.current;
+      const angle = Math.random() * Math.PI * 2;
+      const spawnX = pX + Math.cos(angle) * (width / 2 + 150 + Math.random() * 200);
+      const spawnY = pY + Math.sin(angle) * (height / 2 + 150 + Math.random() * 200);
+
+      piratesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: spawnX,
+        y: spawnY,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2,
+        angle: Math.random() * Math.PI * 2,
+        hp: 120,
+        maxHp: 120,
+        radius: 17,
+        lastFired: 0,
+        color: '#f43f5e'
+      });
+      addGainNotification(`☠️ DETEKOVÁNA DETACHOVANÁ PIRÁTSKÁ LOĎ!`, '#f43f5e');
+    }
+
+    // Update Cosmic Pirates behaviour
+    piratesRef.current.forEach(pirate => {
+      let closestP: Player | null = null;
+      let closestDist = 999999;
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const d = Math.hypot(p.x - pirate.x, p.y - pirate.y);
+          if (d < closestDist) {
+            closestDist = d;
+            closestP = p;
+          }
+        }
+      });
+
+      if (closestP) {
+        const p = closestP as Player;
+        const targetAngle = Math.atan2(p.y - pirate.y, p.x - pirate.x);
+        let dAngle = targetAngle - pirate.angle;
+        while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+        while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+        pirate.angle += dAngle * 0.04; // rotation rate
+
+        // Propel forward
+        const spd = 1.8;
+        pirate.vx = Math.cos(pirate.angle) * spd;
+        pirate.vy = Math.sin(pirate.angle) * spd;
+
+        // Fire at closest player within range (450px) and cooldown is over (1.5s)
+        if (closestDist < 450 && Date.now() - pirate.lastFired > 1500) {
+          pirate.lastFired = Date.now();
+          pirateLasersRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: pirate.x + Math.cos(pirate.angle) * 20,
+            y: pirate.y + Math.sin(pirate.angle) * 20,
+            vx: Math.cos(pirate.angle) * 7.5,
+            vy: Math.sin(pirate.angle) * 7.5,
+            angle: pirate.angle,
+            radius: 4.5,
+            color: '#f43f5e',
+            lifetime: 0,
+            maxLifetime: 65
+          });
+          playLaserSound(1);
+        }
+      } else {
+        pirate.vx *= 0.98;
+        pirate.vy *= 0.98;
+      }
+
+      pirate.x += pirate.vx;
+      pirate.y += pirate.vy;
+    });
+
+    // Check pirate destruction and clean up
+    piratesRef.current.forEach(pirate => {
+      if (pirate.hp <= 0) {
+        handlePirateBlowUp(pirate);
+      }
+    });
+    piratesRef.current = piratesRef.current.filter(p => p.hp > 0);
+
+    // Update Pirate Lasers collision checks
+    pirateLasersRef.current.forEach(pl => {
+      pl.x += pl.vx;
+      pl.y += pl.vy;
+      pl.lifetime++;
+      
+      // Check collision with player ships!
+      playersRef.current.forEach(p => {
+        if (p.hull > 0 && p.invulnerableTime <= 0 && pl.lifetime < pl.maxLifetime) {
+          const d = Math.hypot(p.x - pl.x, p.y - pl.y);
+          if (d < p.radius + pl.radius) {
+            if (p.shield > 0) {
+              p.shield = Math.max(0, p.shield - 14);
+              addGainNotification(`💥 ${p.name} - ABSORBOVÁN ZÁSAH ŠTÍTEM!`, '#fb923c');
+            } else {
+              p.hull = Math.max(0, p.hull - 8);
+              addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN RAKETAMI!`, '#ef4444');
+              if (p.hull <= 0) {
+                addGainNotification(`💀 ${p.name} ZNIČEN PIRÁTY!`, '#ef4444');
+                triggerShipCatastrophicFailure();
+              }
+            }
+            playDamageSound();
+            pl.lifetime = pl.maxLifetime; // mark dead
+          }
+        }
+      });
+    });
+
+    // Remove stale pirate lasers
+    pirateLasersRef.current = pirateLasersRef.current.filter(pl => pl.lifetime < pl.maxLifetime);
 
     // Settle React state stats regularly so scoreboards and other layers update correctly
     const kbP1Val = playersRef.current.find(pl => pl.inputSource === 'keyboard_p1');
@@ -1616,6 +2117,27 @@ export default function App() {
       });
     });
 
+    // Check laser hit pirate
+    lasersRef.current.forEach(laser => {
+      piratesRef.current.forEach(pirate => {
+        const ldx = laser.x - pirate.x;
+        const ldy = laser.y - pirate.y;
+        const radSum = laser.radius + pirate.radius;
+
+        if (ldx * ldx + ldy * ldy < radSum * radSum) {
+          const appliedDamage = laser.damage;
+          pirate.hp -= appliedDamage;
+
+          if (!laser.isPiercing) {
+            laser.lifetime = laser.maxLifetime;
+          }
+
+          triggerOreSparkExplosion(laser.x, laser.y, '#f43f5e');
+          playExplosionSound('small');
+        }
+      });
+    });
+
     lasersRef.current = lasersRef.current.filter(l => l.lifetime < l.maxLifetime);
 
     // --- SHIP CRASH CHECK FOR ALL ACTIVE PLAYERS ---
@@ -1772,17 +2294,50 @@ export default function App() {
     if (!p) return;
     if (p.invulnerableTime > 0 && p.hull <= 0) return;
 
-    // Find nearest asteroid candidate in range
+    // Find nearest targets (asteroids and pirates) in range
     const searchLimit = 520;
-    let candidates = asteroidsRef.current.map(ast => {
-      const dx = ast.x - p.x;
-      const dy = ast.y - p.y;
-      return { ast, dist: Math.hypot(dx, dy) };
+    
+    interface LightningTarget {
+      id: string;
+      x: number;
+      y: number;
+      hp: number;
+      color: string;
+      isPirate: boolean;
+      ref: any;
+    }
+
+    const astTargets: LightningTarget[] = asteroidsRef.current.map(ast => ({
+      id: ast.id,
+      x: ast.x,
+      y: ast.y,
+      hp: ast.hp,
+      color: ast.color || '#ffffff',
+      isPirate: false,
+      ref: ast
+    }));
+
+    const pirateTargets: LightningTarget[] = piratesRef.current.map(pir => ({
+      id: pir.id,
+      x: pir.x,
+      y: pir.y,
+      hp: pir.hp,
+      color: pir.color,
+      isPirate: true,
+      ref: pir
+    }));
+
+    const combined = [...astTargets, ...pirateTargets];
+
+    let candidates = combined.map(t => {
+      const dx = t.x - p.x;
+      const dy = t.y - p.y;
+      return { target: t, dist: Math.hypot(dx, dy) };
     }).filter(c => c.dist < searchLimit)
       .sort((a, b) => a.dist - b.dist);
 
     if (candidates.length === 0) {
-      addGainNotification("ŽÁDNÝ ASTEROID NENÍ V DOSAHU BLESKU!", "#e11d48");
+      addGainNotification("ŽÁDNÝ CÍL NENÍ V DOSAHU BLESKU!", "#e11d48");
       return;
     }
 
@@ -1803,14 +2358,14 @@ export default function App() {
     const hitIds: string[] = [];
 
     for (let j = 0; j < maxJumps; j++) {
-      const nextC = candidates.find(c => !hitIds.includes(c.ast.id));
+      const nextC = candidates.find(c => !hitIds.includes(c.target.id));
       if (!nextC) break;
 
-      const target = nextC.ast;
+      const target = nextC.target;
       hitIds.push(target.id);
 
       // Hit target
-      target.hp -= dmg;
+      target.ref.hp -= dmg;
 
       // Draw beautiful electrical lightning sparks along the path
       const sx = sourceX;
@@ -1840,23 +2395,27 @@ export default function App() {
         });
       }
 
-      if (target.hp <= 0) {
-        setTimeout(() => {
-          const alive = asteroidsRef.current.some(a => a.id === target.id);
-          if (alive) handleAsteroidBlowUp(target);
-        }, 110);
+      if (target.isPirate) {
+        triggerOreSparkExplosion(target.x, target.y, '#f43f5e');
       } else {
-        triggerOreSparkExplosion(target.x, target.y, '#facc15');
+        if (target.ref.hp <= 0) {
+          setTimeout(() => {
+            const alive = asteroidsRef.current.some(a => a.id === target.id);
+            if (alive) handleAsteroidBlowUp(target.ref);
+          }, 110);
+        } else {
+          triggerOreSparkExplosion(target.x, target.y, '#facc15');
+        }
       }
 
       sourceX = target.x;
       sourceY = target.y;
 
-      // Re-sort candicates starting from current target position
+      // Re-sort candidates starting from current target position
       candidates = candidates.map(c => {
-        const dx = c.ast.x - target.x;
-        const dy = c.ast.y - target.y;
-        return { ast: c.ast, dist: Math.hypot(dx, dy) };
+        const dx = c.target.x - target.x;
+        const dy = c.target.y - target.y;
+        return { target: c.target, dist: Math.hypot(dx, dy) };
       }).sort((a, b) => a.dist - b.dist);
     }
   };
@@ -1928,6 +2487,27 @@ export default function App() {
         }
       }
     });
+
+    // Physical push checking on pirates
+    piratesRef.current.forEach(pirate => {
+      const dx = pirate.x - p.x;
+      const dy = pirate.y - p.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < pulseRadius && dist > 10) {
+        const ratio = 1 - dist / pulseRadius;
+        const pushForce = 6.0 + lvl * 3.0;
+        const pushAngle = Math.atan2(dy, dx);
+
+        pirate.vx += Math.cos(pushAngle) * (pushForce * ratio);
+        pirate.vy += Math.sin(pushAngle) * (pushForce * ratio);
+
+        const dmg = lvl * 6;
+        pirate.hp -= dmg;
+
+        triggerOreSparkExplosion(pirate.x, pirate.y, '#ef4444');
+      }
+    });
   };
 
   const triggerSuperMagnetVacuum = (playerNum: number) => {
@@ -1946,6 +2526,55 @@ export default function App() {
 
     playUpgradeSound();
     addGainNotification("SUPER MAGNET: AKTIVOVÁN!", "#06b6d4");
+  };
+
+  const triggerSpawnPirateDrops = (px: number, py: number) => {
+    const drops: Ore[] = [];
+    drops.push(createOreEntity(px, py, 'obsidian'));
+    drops.push(createOreEntity(px, py, 'diamond', true));
+    drops.push(createOreEntity(px, py, 'diamond', true));
+    for (let i = 0; i < 4; i++) {
+      drops.push(createOreEntity(px, py, 'crystal', true));
+    }
+    oresRef.current = [...oresRef.current, ...drops];
+  };
+
+  const handlePirateBlowUp = (pirate: Pirate) => {
+    playExplosionSound('large');
+
+    for (let i = 0; i < 35; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 4.5 + 1.2;
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: pirate.x,
+        y: pirate.y,
+        vx: Math.cos(angle) * speed + pirate.vx * 0.4,
+        vy: Math.sin(angle) * speed + pirate.vy * 0.4,
+        color: Math.random() < 0.4 ? '#ffffff' : '#f43f5e',
+        size: Math.random() * 5.0 + 1.5,
+        alpha: 1.0,
+        lifetime: 0,
+        maxLifetime: 35 + Math.floor(Math.random() * 35),
+      });
+    }
+
+    const bonusPoints = 500;
+    const newScore = scoreRef.current + bonusPoints;
+    scoreRef.current = newScore;
+    setCurrentScore(newScore);
+
+    setStats(curr => {
+      const nextStats = {
+        ...curr,
+        highScore: Math.max(curr.highScore, newScore)
+      };
+      saveStats(nextStats);
+      return nextStats;
+    });
+
+    triggerSpawnPirateDrops(pirate.x, pirate.y);
+    addGainNotification("☠️ CORSÁR ZNIČEN! (+500 skóre, drahokamy vypadly!)", "#f43f5e");
   };
 
   // --- ASTEROID DESTRUCTION & SUB-SPLIT MECHANIC ---
@@ -2301,11 +2930,172 @@ export default function App() {
         ctx.fillRect(-ast.radius, ast.radius + 10, ast.radius * 2 * hpPercent, 5);
       }
 
+      // --- SCANNER HOLOGRAPHIC OVERLAY ON CLOSE-BY ASTEROIDS ---
+      let closePlayerNear = false;
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const dist = Math.hypot(p.x - ast.x, p.y - ast.y);
+          if (dist < 185) closePlayerNear = true;
+        }
+      });
+
+      if (closePlayerNear) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
+        ctx.shadowColor = '#06b6d4';
+        ctx.shadowBlur = 4;
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        
+        let label = 'Neznámý minerál';
+        let amountStr = 'Obsah: ???';
+        if (ast.asteroidType === 'magma') {
+          label = '🔥 MAGMATICKÝ OBSIDIÁN';
+          amountStr = 'Obsah: fialové krystaly, 100%';
+        } else if (ast.asteroidType === 'ice') {
+          label = '❄️ KRYSTALICKÝ LED/DIAMANT';
+          amountStr = 'Obsah: diamanty, 100%';
+        } else if (ast.asteroidType === 'crystal') {
+          label = '💎 KRYSTALICKÉ JÁDRO';
+          amountStr = 'Obsah: krystaly, 100%';
+        } else {
+          label = '🪨 OBYČEJNÁ RUDNÁ SKÁLA';
+          amountStr = 'Obsah: krystaly, 100%';
+        }
+
+        ctx.fillText(label, 0, -ast.radius - 20);
+        ctx.fillText(amountStr, 0, -ast.radius - 10);
+        ctx.restore();
+      }
+
       ctx.restore();
     });
 
+    // --- DRAW ANCHOR CORDS (TETHERS) FROM PLAYERS TO ASTEROIDS ---
+    playersRef.current.forEach(p => {
+      if (p.hull > 0 && p.anchoredAsteroidId) {
+        const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
+        if (asteroid) {
+          ctx.save();
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = 2.5;
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = p.glowColor;
+          
+          // Draw a pulsing tech tether line!
+          ctx.beginPath();
+          ctx.moveTo(p.x - camX, p.y - camY);
+          ctx.lineTo(asteroid.x - camX, asteroid.y - camY);
+          ctx.stroke();
+
+          // Draw neon anchor hooks at the intersection!
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(p.x - camX, p.y - camY, 4, 0, Math.PI * 2);
+          ctx.arc(asteroid.x - camX, asteroid.y - camY, 6, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // If drilling, draw rotating drilling core rings around tether!
+          if (p.isDrilling) {
+            const rotSpeed = Date.now() / 150;
+            ctx.strokeStyle = '#facc15';
+            ctx.shadowColor = '#eab308';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.x - camX, p.y - camY, 15 + Math.sin(rotSpeed) * 3, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+    });
+
+    // --- DRAW COSMIC PIRATES & PIRATE LASERS ---
+    piratesRef.current.forEach(pirate => {
+      const sx = pirate.x - camX;
+      const sy = pirate.y - camY;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(pirate.angle);
+
+      // Red/Dark pirate fighter outline
+      ctx.strokeStyle = pirate.color;
+      ctx.fillStyle = '#1e1b4b'; // deep indigo fill
+      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = pirate.color;
+
+      ctx.beginPath();
+      ctx.moveTo(18, 0);
+      ctx.lineTo(-12, -15);
+      ctx.lineTo(-6, -6);
+      ctx.lineTo(-6, 6);
+      ctx.lineTo(-12, 15);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Pirate engines
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(-10, -5, 4, 10);
+
+      // Label
+      ctx.save();
+      ctx.rotate(-pirate.angle);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('☠️ CORSÁR', 0, -pirate.radius - 10);
+      ctx.restore();
+
+      ctx.restore();
+    });
+
+    pirateLasersRef.current.forEach(pl => {
+      const sx = pl.x - camX;
+      const sy = pl.y - camY;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(pl.angle);
+
+      // Crimson rocket plasma blast
+      ctx.fillStyle = '#f43f5e';
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = '#f43f5e';
+      
+      // Draw standard double red bolt
+      ctx.beginPath();
+      ctx.arc(0, 0, pl.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    });
+
+    // --- DRAW SOLAR STORM ATMOSPHERIC FX SLIDER PANEL ---
+    if (solarStormActiveRef.current) {
+      // Screen orange warning outline panel
+      ctx.save();
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+      ctx.lineWidth = 15;
+      ctx.strokeRect(0, 0, width, height);
+
+      // Glowing solar warning banner text
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+      ctx.fillRect(0, 35, width, 50);
+      
+      ctx.fillStyle = '#f97316';
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = '#ef4444';
+      ctx.font = 'bold 13px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡ ! VAROVÁNÍ: AKTIVNÍ SOLÁRNÍ PROTUBERANCE - CHRAŇ SE ZA ASTEROIDY ! ⚡', width / 2, 60);
+      ctx.restore();
+    }
+
     // --- F. PLAYER MINING SPACESHIP RENDER (DYNAMIC MIDPOINT CAMERA) ---
-    const drawPlayerShip = (p: any, playerNum: 1 | 2, currentHull: number, currentShield: number, maxShieldVal: number) => {
+    const drawPlayerShip = (p: any, playerNum: number, currentHull: number, currentShield: number, maxShieldVal: number) => {
       const sx = p.x - camX;
       const sy = p.y - camY;
 
@@ -2736,6 +3526,57 @@ export default function App() {
                 ) : null}
               </div>
             </div>
+
+            {/* COSMIC WEATHER STATION (ENVIRONMENT HAZARDS) */}
+            <div className={`mt-3 p-3 rounded-xl border font-mono text-[11px] flex flex-col gap-1 shadow-lg transition-all ${
+              solarStormActive 
+                ? 'bg-red-950/90 border-red-500 text-red-200 animate-pulse' 
+                : solarStormWarning > 0 
+                  ? 'bg-amber-950/95 border-amber-500 text-amber-200 animate-bounce' 
+                  : 'bg-slate-950/85 border-slate-800 text-slate-300'
+            }`}>
+              <div className="flex items-center gap-1.5 font-sans font-extrabold text-xs uppercase tracking-wider">
+                <span className={`w-2 h-2 rounded-full ${solarStormActive ? 'bg-red-500 animate-ping' : solarStormWarning > 0 ? 'bg-amber-500 animate-ping' : 'bg-emerald-500'}`} />
+                <span>Kosmické počasí</span>
+              </div>
+              {solarStormActive ? (
+                <div className="flex flex-col gap-0.5 font-bold mt-1">
+                  <span className="text-red-400">🚨 RADIACE AKTIVNÍ!</span>
+                  <span>Schovej se za velké rotující asteroidy nebo ukotvi loď!</span>
+                </div>
+              ) : solarStormWarning > 0 ? (
+                <div className="flex flex-col gap-0.5 font-bold mt-1">
+                  <span className="text-amber-400">⚠️ SOLÁRNÍ BOUŘE ZA: {solarStormWarning}s</span>
+                  <span>Rychle najdi bezpečný úkryt!</span>
+                </div>
+              ) : (
+                <span className="text-slate-500 mt-1">Magnetosféra stabilní. Stav: OK</span>
+              )}
+            </div>
+
+            {/* MECHANICAL ANCHOR & SCANNING SYSTEMS INFO CARD */}
+            <div className="p-3 rounded-xl bg-slate-950/85 border border-slate-800 font-mono text-[10px] text-slate-400 flex flex-col gap-1 max-w-[260px] shadow-lg">
+              <span className="font-sans font-extrabold text-xs text-slate-300 uppercase tracking-widest leading-none">⚓ Kotva a Skenování</span>
+              
+              <div className="flex flex-col gap-1 mt-1 font-sans">
+                <div className="flex justify-between items-center bg-slate-900/60 p-1 rounded">
+                  <span>Hráč 1 Kotva:</span>
+                  <span className="bg-slate-800 text-slate-200 px-1 py-0.5 rounded text-[9px] font-mono">Kl. H / Gp L3</span>
+                </div>
+                <div className="flex justify-between items-center bg-slate-900/60 p-1 rounded">
+                  <span>Hráč 2 Kotva:</span>
+                  <span className="bg-slate-800 text-slate-200 px-1 py-0.5 rounded text-[9px] font-mono">Kl. G / Gp R3</span>
+                </div>
+              </div>
+
+              <p className="mt-1 leading-tight text-slate-500 text-[9px]">
+                Přileť blízko k asteroidu a nahoď kotvu. Loď se synchronizuje s rotací a automaticky spustí <b>těžební vrt</b> bez spotřeby energie!
+              </p>
+              <p className="text-cyan-400 text-[9px] leading-tight">
+                🔍 <b>Skenery:</b> Blízké asteroidy automaticky zobrazují mineralogický obsah a ložiska v reálném čase.
+              </p>
+            </div>
+
           </div>
 
           {/* RIGHT FLOATING QUICK GUIDE */}
@@ -2772,7 +3613,7 @@ export default function App() {
               <div className="mt-2 bg-slate-950/90 border border-slate-800 p-3 rounded-xl max-w-xs text-xs space-y-2 text-slate-300 shadow-2xl animate-fade-in pr-5">
                 <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block mb-1">Letový manuál</span>
                 <p className="text-cyan-400 font-bold border-b border-slate-900 pb-0.5 text-[10px]">Hráč 1 (Modrý):</p>
-                <p>• <b>Let:</b> Klávesy [ W / S ] nebo Gamepad Levá páčka</p>
+                <p>• <b>Let:</b> Klávesy [ W / S ] nebo Gamepad Levý trigger (LT)</p>
                 <p>• <b>Rotace:</b> [ A / D ] / Myš</p>
                 <p>• <b>Střelba:</b> [ Mezerník ] / Levý klik / Gamepad [ A ]</p>
                 

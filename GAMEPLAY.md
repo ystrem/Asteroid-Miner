@@ -29,6 +29,22 @@ Kamera se automaticky přizpůsobuje a plynule scrolluje na středový bod (midp
 ### 4. Řetězová Reakce Námrazy & Expolozí
 * Zničení ledových asteroidů uvolní mrazivé fragmenty zpomalující okolní tělesa, zatímco magmatická jádra explodují a uvolňují spršku žhavých projektilů, které mohou zapálit sousední objekty.
 
+### 5. Kotevní a Těžební Vrtný Systém
+* **Koncept:** Letka je vybavena magnetickými harpunovými kotvami. Přiblížením se k libovolnému asteroidu na těsnou vzdálenost (zhruba šířka lodi) a stisknutím kotevní klávesy se loď **pevně přichytí k povrchu**.
+* **Rotace a Let:** Loď přestává spotřebovávat palivo a drží se v pevné oběžné dráze asteroidu, přičemž plynule rotuje a pohybuje se s ním.
+* **Automatické Vrtání:** Přichycením se okamžitě spustí hluboký vrtný mechanismus. Každých 1.25 sekundy vrt vytáhne drahocenné suroviny přímo z jádra asteroidu bez nutnosti střílení, dokud skálu zcela nevytěžíte a nezničíte!
+
+### 6. Geologické Skenery v Reálném Čase
+* Lodní skenery byly vylepšeny o holografický analyzátor. Kdykoliv proletíte blízko asteroidu (do 185px), na vaší obrazovce se nad kamenem zobrazí **holografický HUD štítek** analyzující jeho mineralogické složení a čistotu (magmatický obsidián, ledový diamant, krystalové jádro).
+
+### 7. Solární Bouře & Radiace (Dynamické Prostředí)
+* **Výstražný systém:** Skenery pravidelně monitorují sluneční aktivitu. Jakmile zachytí anomálii, na HUD panelu se spustí **bouncující odpočet varování** doprovázený varovnými hlášeními.
+* **Aktivní fáze:** Po odpočtu začne sluneční bouře. Smrtící radiace začne bičovat veškerý otevřený prostor (směrem shora dolů).
+* **Ochranný stín:** Pokud se hráči ocitnou v otevřeném vesmíru, radiace jim bleskově sežehne štíty i trup. Jedinou záchranou je **schovat se do stínu za velké či obrovské asteroidy** (které radiaci odkloní), nebo se pevně ukotvit do jádra asteroidu, což poskytuje dokonalou izolaci před živly!
+
+### 8. Kosmičtí Piráti (CORSÁŘI)
+* Vesmír není opuštěný. Mezi pásy se mohou náhodně vynořit **nepřátelské pirátské lodě (CORSÁŘI)** s rudými energetickými štíty a plazmovými děly. Piráti autonomně vyhledávají a pronásledují nejbližšího těžaře, pálí naváděné střely a pokoušejí se narušit vaše operace. Zničte je dřív, než roztříští vaši letku na kusy!
+
 ---
 
 ## 🎮 Dynamické Ovládání & Drop-in/Drop-out Multiplayer
@@ -40,6 +56,7 @@ Hru již nemusíte spouštět v pevném režimu Solo nebo Co-op. Hráči se moho
 * **Zpětný chod:** `Šipka Dolů`
 * **Otáčení lodi:** `Šipka Vlevo` / `Šipka Vpravo`
 * **Základní laser:** `Pravý CTRL` nebo `Mezerník`
+* **Nahodit / Pustit Kotvu (Těžba):** Klávesa `H` (nebo `0` / `Num0`)
 * **Aktivní dovednosti (Schopnosti):**
   * **9:** Řetězový blesk (Chain Lightning)
   * **8:** Kinetický puls (Pulse Wave)
@@ -50,6 +67,7 @@ Hru již nemusíte spouštět v pevném režimu Solo nebo Co-op. Hráči se moho
 * **Zpětný chod:** Klávesa `S`
 * **Otáčení lodi:** Klávesa `A` / `D`
 * **Základní laser:** `Levý CTRL`
+* **Nahodit / Pustit Kotvu (Těžba):** Klávesa `G` (nebo `4` / `Num4`)
 * **Aktivní dovednosti (Schopnosti):**
   * **1:** Řetězový blesk (Chain Lightning)
   * **2:** Kinetický puls (Pulse Wave)
@@ -57,9 +75,10 @@ Hru již nemusíte spouštět v pevném režimu Solo nebo Co-op. Hráči se moho
 
 ### 🎮 Hráči s Gamepady (Pilot 3, 4 a další)
 * **Vstup do hry:** Stiskněte **libovolné tlačítko** na připojeném gamepadu. Hra okamžitě vytvoří novou loď se specifickou barvou a přidá pilota do týmu!
-* **Pohyb lodi:** `Levá páčka` (náklon určuje směr i sílu tahu motoru).
+* **Pohon / Akcelerace:** Levý trigger (LT) (aktivuje trysky motorů a pohání loď vpřed).
 * **Směřování lodi:** `Pravá páčka` (otáčí loď plynule v plném rozsahu 360 stupňů).
 * **Základní laser:** Spodní akční tlačítko gamepadu (např. tlačítko `A` na Xbox ovladači / `Křížek` na PlayStation ovladači).
+* **Nahodit / Pustit Kotvu (Těžba):** Stisk levé nebo pravé páčky (`L3` / `R3`), směrový kříž dolů (`D-pad Down`), nebo tlačítko `Select`.
 
 ### 🚪 Odpojení z probíhající hry
 * V dolním panelu rozhraní HUD se u každého připojeného letce zobrazuje křížek **"Odpojit ×"**. Kliknutím na něj může hráč kdykoliv bezpečně opustit hru, přičemž jeho loď se ztratí ze scény a kamera se automaticky přizpůsobí zbývající flotile.
