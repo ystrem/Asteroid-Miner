@@ -38,6 +38,7 @@ import {
   resetGameSave 
 } from './utils/storage';
 import UpgradeShop from './components/UpgradeShop';
+import AsteroidExplorer from './components/AsteroidExplorer';
 import { 
   Swords, 
   Shield, 
@@ -154,6 +155,16 @@ export default function App() {
   const superMagnetActiveRef = useRef<number>(0);
 
   const gameModeRef = useRef<'single' | 'coop'>('single');
+
+  // Astronaut explorer minigame state
+  const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(false);
+  const isExplorerOpenRef = useRef<boolean>(false);
+  const [explorerAsteroidData, setExplorerAsteroidData] = useState<{
+    type: 'magma' | 'frost' | 'crystal' | 'normal';
+    radius: number;
+    color: string;
+    name: string;
+  } | null>(null);
 
   // Brainstorm mechanics states & refs
   const [solarStormActive, setSolarStormActive] = useState<boolean>(false);
@@ -394,6 +405,14 @@ export default function App() {
         if (code === 'KeyG' || code === 'Digit4' || code === 'Numpad4') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) toggleAnchor(p2);
+        }
+
+        // Surface disembark triggers on Enter or KeyX when any player is anchored
+        if (code === 'Enter' || code === 'KeyX' || code === 'KeyN') {
+          const isAnyPlayerAnchored = playersRef.current.some(p => p.anchoredAsteroidId);
+          if (isAnyPlayerAnchored) {
+            handleOpenExplorer();
+          }
         }
 
         // Ability bindings based on player associations
@@ -898,6 +917,63 @@ export default function App() {
     playUpgradeSound();
   };
 
+  // --- SURFACE EXPLORATION ATOM EXPLORER SYSTEM IMPLEMENTATION ---
+  const findAnchoredAsteroid = () => {
+    const p = playersRef.current.find(pl => pl.anchoredAsteroidId);
+    if (!p) return null;
+    return asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
+  };
+
+  const handleOpenExplorer = () => {
+    const ast = findAnchoredAsteroid();
+    if (!ast) return;
+    
+    let type: 'magma' | 'frost' | 'crystal' | 'normal' = 'normal';
+    if (ast.type === 'magma') type = 'magma';
+    else if (ast.type === 'frost') type = 'frost';
+    else if (ast.type === 'crystal') type = 'crystal';
+
+    setExplorerAsteroidData({
+      type,
+      radius: ast.radius,
+      color: ast.color || '#475569',
+      name: ast.name || 'Neznámý Planetoid'
+    });
+    
+    setIsExplorerOpen(true);
+    isExplorerOpenRef.current = true;
+    updateEngineHum(false);
+  };
+
+  const handleCloseExplorer = (minedCrystals: number, minedDiamonds: number, minedObsidians: number, scoreBonus: number) => {
+    setIsExplorerOpen(false);
+    isExplorerOpenRef.current = false;
+    setExplorerAsteroidData(null);
+
+    // Save resources into wallet stats
+    const updatedStats = {
+      ...stats,
+      crystals: stats.crystals + minedCrystals,
+      diamonds: stats.diamonds + minedDiamonds,
+      obsidians: stats.obsidians + minedObsidians,
+      highScore: Math.max(stats.highScore, scoreRef.current + scoreBonus)
+    };
+    setStats(updatedStats);
+    saveStats(updatedStats);
+
+    // Credit score
+    const newScore = scoreRef.current + scoreBonus;
+    scoreRef.current = newScore;
+    setCurrentScore(newScore);
+
+    // Show nice summary notifications
+    addGainNotification(`💎 EXPEDICE POVRCHU DOKONČENA!`, '#10b981');
+    if (minedCrystals > 0) addGainNotification(`+${minedCrystals} Krystalů`, '#10b981');
+    if (minedDiamonds > 0) addGainNotification(`+${minedDiamonds} Diamantů`, '#38bdf8');
+    if (minedObsidians > 0) addGainNotification(`+${minedObsidians} Obsidiánů`, '#f43f5e');
+    addGainNotification(`+${scoreBonus} Bodů do skóre`, '#eab308');
+  };
+
   // Toggle Mute Audio
   const handleToggleMute = () => {
     const nextState = !isMuted;
@@ -1196,7 +1272,7 @@ export default function App() {
   const tickGameLoop = () => {
     if (!isPlayingRef.current) return;
 
-    if (isShopOpenRef.current) {
+    if (isShopOpenRef.current || isExplorerOpenRef.current) {
       // Game paused, draw static elements but skip physics updates
       updateEngineHum(false);
       drawGameScene();
@@ -2725,655 +2801,745 @@ export default function App() {
     }
   };
 
-  // --- HTML5 CANVAS RENDER PASS (SCROLLING MAP EFFECT) ---
+  // --- HTML5 CANVAS RENDER PASS (SCROLLING MAP EFFECT / SPLIT-SCREEN COOP) ---
   const drawGameScene = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Redraw viewport
     const width = canvas.width;
     const height = canvas.height;
     ctx.clearRect(0, 0, width, height);
 
-    // Deep starry void background fill
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(0, 0, width, height);
+    // Encapsulate drawing layout for a single viewport (supports standard front and rear 180-degree cameras)
+    const drawSingleViewport = (focusPlayer: Player, vx: number, vy: number, vw: number, vh: number, isRear?: boolean) => {
+      let targetCamX = focusPlayer.x;
+      let targetCamY = focusPlayer.y;
 
-    // Choose dynamic center of projection based on all alive player positions
-    let sumX = 0;
-    let sumY = 0;
-    let aliveCount = 0;
-
-    playersRef.current.forEach(p => {
-      if (p.hull > 0) {
-        sumX += p.x;
-        sumY += p.y;
-        aliveCount++;
+      if (isRear) {
+        // Offset camera slightly behind the player's direction of flight to see trail
+        targetCamX -= Math.cos(focusPlayer.angle) * 80;
+        targetCamY -= Math.sin(focusPlayer.angle) * 80;
       }
-    });
 
-    let targetCamX = 0;
-    let targetCamY = 0;
-
-    if (aliveCount > 0) {
-      targetCamX = sumX / aliveCount;
-      targetCamY = sumY / aliveCount;
-    } else if (playersRef.current.length > 0) {
-      targetCamX = playersRef.current[0].x;
-      targetCamY = playersRef.current[0].y;
-    }
-
-    // Physical coordinate system camera center mappings
-    const camX = targetCamX - width / 2;
-    const camY = targetCamY - height / 2;
-
-    // --- A. PARALLAX STARFIELD RENDER ---
-    starsRef.current.forEach(star => {
-      // Loop star positions symmetrically so stars feel infinite
-      let sx = (star.x - targetCamX * star.speed) % width;
-      let sy = (star.y - targetCamY * star.speed) % height;
-      if (sx < 0) sx += width;
-      if (sy < 0) sy += height;
+      const camX = targetCamX - vw / 2;
+      const camY = targetCamY - vh / 2;
 
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(sx, sy, star.size, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
       
-      // Make bright stars glow nicely
-      if (star.size > 1.3) {
-        ctx.shadowBlur = 4;
-        ctx.shadowColor = '#60a5fa';
-      }
-      ctx.fill();
-      ctx.restore();
-    });
-
-    // --- B. PARTICLES RENDER ---
-    particlesRef.current.forEach(p => {
-      const sx = p.x - camX;
-      const sy = p.y - camY;
-
-      ctx.save();
-      ctx.globalAlpha = p.alpha;
+      // 1. Clip render workspace specifically inside viewport boundaries
       ctx.beginPath();
-      ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
-      ctx.fillStyle = p.color;
-      
-      ctx.shadowBlur = p.size * 2;
-      ctx.shadowColor = p.color;
-      ctx.fill();
-      ctx.restore();
-    });
+      ctx.rect(vx, vy, vw, vh);
+      ctx.clip();
 
-    // --- C. FLOATING ORE DROPS RENDER ---
-    oresRef.current.forEach(ore => {
-      const sx = ore.x - camX;
-      const sy = ore.y - camY;
-
-      // Draw shiny crystal outline shapes
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.scale(ore.pulseScale, ore.pulseScale);
-      
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = ore.color;
-      ctx.fillStyle = ore.color;
-
-      ctx.beginPath();
-      // Hexagonal diamond gems shapes
-      ctx.moveTo(0, -ore.radius);
-      ctx.lineTo(ore.radius * 0.8, -ore.radius * 0.3);
-      ctx.lineTo(ore.radius * 0.5, ore.radius * 0.8);
-      ctx.lineTo(0, ore.radius);
-      ctx.lineTo(-ore.radius * 0.5, ore.radius * 0.8);
-      ctx.lineTo(-ore.radius * 0.8, -ore.radius * 0.3);
-      ctx.closePath();
-      ctx.fill();
-
-      // Gleaming top spark sparkle
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(-ore.radius * 0.2, -ore.radius * 0.2, ore.radius * 0.25, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-    });
-
-    // --- D. LASER PROJECTILES RENDER ---
-    lasersRef.current.forEach(l => {
-      const sx = l.x - camX;
-      const sy = l.y - camY;
-
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(l.angle);
-
-      ctx.shadowBlur = l.width * 3;
-      ctx.shadowColor = l.color;
-      ctx.strokeStyle = l.color;
-      ctx.lineWidth = l.width;
-
-      ctx.beginPath();
-      // Draw slick elongated laser beam trace line
-      ctx.moveTo(-15, 0);
-      ctx.lineTo(15, 0);
-      ctx.stroke();
-
-      // Glowing core white hot line in center
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = Math.max(1, l.width - 2);
-      ctx.beginPath();
-      ctx.moveTo(-10, 0);
-      ctx.lineTo(10, 0);
-      ctx.stroke();
-
-      ctx.restore();
-    });
-
-    // --- E. ASTEROIDS CLOUD RENDER ---
-    asteroidsRef.current.forEach(ast => {
-      const sx = ast.x - camX;
-      const sy = ast.y - camY;
-
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(ast.angle);
-
-      // Neon outline cyberpunk glowing style rocks!
-      ctx.strokeStyle = ast.color;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'; // semi-transparent slate space rock
-      ctx.lineWidth = 2.5;
-      ctx.lineJoin = 'round';
-      
-      ctx.shadowBlur = ast.size === 'huge' ? 5 : 2;
-      ctx.shadowColor = ast.color;
-
-      ctx.beginPath();
-      ctx.moveTo(ast.vertices[0].x, ast.vertices[0].y);
-      for (let i = 1; i < ast.vertices.length; i++) {
-        ctx.lineTo(ast.vertices[i].x, ast.vertices[i].y);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // Draw subtle cracks / geological veins
-      if (ast.asteroidType === 'magma') {
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.85)';
-        ctx.lineWidth = 1.8;
-      } else if (ast.asteroidType === 'ice') {
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-        ctx.lineWidth = 1.8;
-      } else if (ast.asteroidType === 'crystal') {
-        ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)';
-        ctx.lineWidth = 1.8;
-      } else {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-        ctx.lineWidth = 1;
-      }
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(ast.vertices[0].x * 0.4, ast.vertices[0].y * 0.4);
-      ctx.moveTo(0, 0);
-      ctx.lineTo(ast.vertices[Math.floor(ast.vertices.length / 2)].x * 0.5, ast.vertices[Math.floor(ast.vertices.length / 2)].y * 0.5);
-      ctx.stroke();
-
-      // HP bar for huge/large asteroids under assault
-      if (ast.hp < ast.maxHp) {
-        const hpPercent = ast.hp / ast.maxHp;
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(-ast.radius, ast.radius + 10, ast.radius * 2, 5);
-        ctx.fillStyle = hpPercent > 0.5 ? '#10b981' : hpPercent > 0.25 ? '#f59e0b' : '#ef4444';
-        ctx.fillRect(-ast.radius, ast.radius + 10, ast.radius * 2 * hpPercent, 5);
+      if (isRear) {
+        // Rotate the view 180 degrees to simulate rear-view camera looking backwards
+        ctx.translate(vx + vw / 2, vy + vh / 2);
+        ctx.rotate(Math.PI);
+        ctx.translate(-(vx + vw / 2), -(vy + vh / 2));
       }
 
-      // --- SCANNER HOLOGRAPHIC OVERLAY ON CLOSE-BY ASTEROIDS ---
-      let closePlayerNear = false;
+      // 2. Clear background fill
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(vx, vy, vw, vh);
+
+      // --- A. PARALLAX STARFIELD RENDER ---
+      starsRef.current.forEach(star => {
+        let sx = (star.x - targetCamX * star.speed) % vw;
+        let sy = (star.y - targetCamY * star.speed) % vh;
+        if (sx < 0) sx += vw;
+        if (sy < 0) sy += vh;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(vx + sx, vy + sy, star.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+        
+        if (star.size > 1.3) {
+          ctx.shadowBlur = 4;
+          ctx.shadowColor = '#60a5fa';
+        }
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- Translate entire coordinates to vx, vy for simple camera mapping ---
+      ctx.save();
+      ctx.translate(vx, vy);
+
+      // --- B. PARTICLES RENDER ---
+      particlesRef.current.forEach(p => {
+        const sx = p.x - camX;
+        const sy = p.y - camY;
+
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        
+        ctx.shadowBlur = p.size * 2;
+        ctx.shadowColor = p.color;
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- C. FLOATING ORE DROPS RENDER ---
+      oresRef.current.forEach(ore => {
+        const sx = ore.x - camX;
+        const sy = ore.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.scale(ore.pulseScale, ore.pulseScale);
+        
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = ore.color;
+        ctx.fillStyle = ore.color;
+
+        ctx.beginPath();
+        ctx.moveTo(0, -ore.radius);
+        ctx.lineTo(ore.radius * 0.8, -ore.radius * 0.3);
+        ctx.lineTo(ore.radius * 0.5, ore.radius * 0.8);
+        ctx.lineTo(0, ore.radius);
+        ctx.lineTo(-ore.radius * 0.5, ore.radius * 0.8);
+        ctx.lineTo(-ore.radius * 0.8, -ore.radius * 0.3);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-ore.radius * 0.2, -ore.radius * 0.2, ore.radius * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+
+      // --- D. LASER PROJECTILES RENDER ---
+      lasersRef.current.forEach(l => {
+        const sx = l.x - camX;
+        const sy = l.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(l.angle);
+
+        ctx.shadowBlur = l.width * 3;
+        ctx.shadowColor = l.color;
+        ctx.strokeStyle = l.color;
+        ctx.lineWidth = l.width;
+
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.lineTo(15, 0);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1, l.width - 2);
+        ctx.beginPath();
+        ctx.moveTo(-10, 0);
+        ctx.lineTo(10, 0);
+        ctx.stroke();
+
+        ctx.restore();
+      });
+
+      // --- E. ASTEROIDS CLOUD RENDER ---
+      asteroidsRef.current.forEach(ast => {
+        const sx = ast.x - camX;
+        const sy = ast.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ast.angle);
+
+        ctx.strokeStyle = ast.color;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = 'round';
+        
+        ctx.shadowBlur = ast.size === 'huge' ? 5 : 2;
+        ctx.shadowColor = ast.color;
+
+        ctx.beginPath();
+        ctx.moveTo(ast.vertices[0].x, ast.vertices[0].y);
+        for (let i = 1; i < ast.vertices.length; i++) {
+          ctx.lineTo(ast.vertices[i].x, ast.vertices[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        if (ast.asteroidType === 'magma') {
+          ctx.strokeStyle = 'rgba(249, 115, 22, 0.85)';
+          ctx.lineWidth = 1.8;
+        } else if (ast.asteroidType === 'ice') {
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+          ctx.lineWidth = 1.8;
+        } else if (ast.asteroidType === 'crystal') {
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)';
+          ctx.lineWidth = 1.8;
+        } else {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+          ctx.lineWidth = 1;
+        }
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(ast.vertices[0].x * 0.4, ast.vertices[0].y * 0.4);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(ast.vertices[Math.floor(ast.vertices.length / 2)].x * 0.5, ast.vertices[Math.floor(ast.vertices.length / 2)].y * 0.5);
+        ctx.stroke();
+
+        if (ast.hp < ast.maxHp) {
+          const hpPercent = ast.hp / ast.maxHp;
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fillRect(-ast.radius, ast.radius + 10, ast.radius * 2, 5);
+          ctx.fillStyle = hpPercent > 0.5 ? '#10b981' : hpPercent > 0.25 ? '#f59e0b' : '#ef4444';
+          ctx.fillRect(-ast.radius, ast.radius + 10, ast.radius * 2 * hpPercent, 5);
+        }
+
+        let closePlayerNear = false;
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            const dist = Math.hypot(p.x - ast.x, p.y - ast.y);
+            if (dist < 185) closePlayerNear = true;
+          }
+        });
+
+        if (closePlayerNear) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 4;
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          
+          let label = 'Neznámý minerál';
+          let amountStr = 'Obsah: ???';
+          if (ast.asteroidType === 'magma') {
+            label = '🔥 MAGMATICKÝ OBSIDIÁN';
+            amountStr = 'Obsah: fialové krystaly, 100%';
+          } else if (ast.asteroidType === 'ice') {
+            label = '❄️ KRYSTALICKÝ LED/DIAMANT';
+            amountStr = 'Obsah: diamanty, 100%';
+          } else if (ast.asteroidType === 'crystal') {
+            label = '💎 KRYSTALICKÉ JÁDRO';
+            amountStr = 'Obsah: krystaly, 100%';
+          } else {
+            label = '🪨 OBYČEJNÁ RUDNÁ SKÁLA';
+            amountStr = 'Obsah: krystaly, 100%';
+          }
+
+          ctx.fillText(label, 0, -ast.radius - 20);
+          ctx.fillText(amountStr, 0, -ast.radius - 10);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      });
+
+      // --- DRAW ANCHOR CORDS (TETHERS) FROM PLAYERS TO ASTEROIDS ---
       playersRef.current.forEach(p => {
-        if (p.hull > 0) {
-          const dist = Math.hypot(p.x - ast.x, p.y - ast.y);
-          if (dist < 185) closePlayerNear = true;
+        if (p.hull > 0 && p.anchoredAsteroidId) {
+          const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
+          if (asteroid) {
+            ctx.save();
+            ctx.strokeStyle = p.color;
+            ctx.lineWidth = 2.5;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = p.glowColor;
+            
+            ctx.beginPath();
+            ctx.moveTo(p.x - camX, p.y - camY);
+            ctx.lineTo(asteroid.x - camX, asteroid.y - camY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(p.x - camX, p.y - camY, 4, 0, Math.PI * 2);
+            ctx.arc(asteroid.x - camX, asteroid.y - camY, 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (p.isDrilling) {
+              const rotSpeed = Date.now() / 150;
+              ctx.strokeStyle = '#facc15';
+              ctx.shadowColor = '#eab308';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.arc(p.x - camX, p.y - camY, 15 + Math.sin(rotSpeed) * 3, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
         }
       });
 
-      if (closePlayerNear) {
+      // --- DRAW COSMIC PIRATES & PIRATE LASERS ---
+      piratesRef.current.forEach(pirate => {
+        const sx = pirate.x - camX;
+        const sy = pirate.y - camY;
+
         ctx.save();
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
-        ctx.shadowColor = '#06b6d4';
-        ctx.shadowBlur = 4;
+        ctx.translate(sx, sy);
+        ctx.rotate(pirate.angle);
+
+        ctx.strokeStyle = pirate.color;
+        ctx.fillStyle = '#1e1b4b';
+        ctx.lineWidth = 2.5;
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = pirate.color;
+
+        ctx.beginPath();
+        ctx.moveTo(18, 0);
+        ctx.lineTo(-12, -15);
+        ctx.lineTo(-6, -6);
+        ctx.lineTo(-6, 6);
+        ctx.lineTo(-12, 15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-10, -5, 4, 10);
+
+        ctx.save();
+        ctx.rotate(-pirate.angle);
+        ctx.fillStyle = '#ef4444';
         ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
-        
-        let label = 'Neznámý minerál';
-        let amountStr = 'Obsah: ???';
-        if (ast.asteroidType === 'magma') {
-          label = '🔥 MAGMATICKÝ OBSIDIÁN';
-          amountStr = 'Obsah: fialové krystaly, 100%';
-        } else if (ast.asteroidType === 'ice') {
-          label = '❄️ KRYSTALICKÝ LED/DIAMANT';
-          amountStr = 'Obsah: diamanty, 100%';
-        } else if (ast.asteroidType === 'crystal') {
-          label = '💎 KRYSTALICKÉ JÁDRO';
-          amountStr = 'Obsah: krystaly, 100%';
-        } else {
-          label = '🪨 OBYČEJNÁ RUDNÁ SKÁLA';
-          amountStr = 'Obsah: krystaly, 100%';
-        }
+        ctx.fillText('☠️ CORSÁR', 0, -pirate.radius - 10);
+        ctx.restore();
 
-        ctx.fillText(label, 0, -ast.radius - 20);
-        ctx.fillText(amountStr, 0, -ast.radius - 10);
+        ctx.restore();
+      });
+
+      pirateLasersRef.current.forEach(pl => {
+        const sx = pl.x - camX;
+        const sy = pl.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(pl.angle);
+
+        ctx.fillStyle = '#f43f5e';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#f43f5e';
+        
+        ctx.beginPath();
+        ctx.arc(0, 0, pl.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+
+      // --- DRAW SOLAR STORM ATMOSPHERIC FX ---
+      if (solarStormActiveRef.current) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.lineWidth = 15;
+        ctx.strokeRect(0, 0, vw, vh);
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+        ctx.fillRect(0, 35, vw, 50);
+        
+        ctx.fillStyle = '#f97316';
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ef4444';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡ ! AKTIVNÍ SOLÁRNÍ PROTUBERANCE ! ⚡', vw / 2, 60);
         ctx.restore();
       }
 
-      ctx.restore();
-    });
+      // --- DRAW ACTIVE RUNNING PLAYER SPACESHIPS ---
+      const drawPlayerShip = (p: any, playerNum: number, currentHull: number, currentShield: number, maxShieldVal: number) => {
+        const sx = p.x - camX;
+        const sy = p.y - camY;
 
-    // --- DRAW ANCHOR CORDS (TETHERS) FROM PLAYERS TO ASTEROIDS ---
-    playersRef.current.forEach(p => {
-      if (p.hull > 0 && p.anchoredAsteroidId) {
-        const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
-        if (asteroid) {
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        if (superMagnetActiveRef.current > 0) {
           ctx.save();
-          ctx.strokeStyle = p.color;
-          ctx.lineWidth = 2.5;
-          ctx.shadowBlur = 8;
-          ctx.shadowColor = p.glowColor;
+          const spinAngle = Date.now() / 110;
+          ctx.lineWidth = 2.0;
+          ctx.shadowBlur = 10;
           
-          // Draw a pulsing tech tether line!
+          ctx.strokeStyle = '#22d3ee';
+          ctx.shadowColor = '#22d3ee';
           ctx.beginPath();
-          ctx.moveTo(p.x - camX, p.y - camY);
-          ctx.lineTo(asteroid.x - camX, asteroid.y - camY);
+          for (let j = 0; j < 50; j++) {
+            const theta = j * 0.22 + spinAngle;
+            const r = j * 1.1 + 16;
+            const vx_m = Math.cos(theta) * r;
+            const vy_m = Math.sin(theta) * r;
+            if (j === 0) ctx.moveTo(vx_m, vy_m);
+            else ctx.lineTo(vx_m, vy_m);
+          }
           ctx.stroke();
 
-          // Draw neon anchor hooks at the intersection!
-          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = '#a855f7';
+          ctx.shadowColor = '#a855f7';
           ctx.beginPath();
-          ctx.arc(p.x - camX, p.y - camY, 4, 0, Math.PI * 2);
-          ctx.arc(asteroid.x - camX, asteroid.y - camY, 6, 0, Math.PI * 2);
-          ctx.fill();
-          
-          // If drilling, draw rotating drilling core rings around tether!
-          if (p.isDrilling) {
-            const rotSpeed = Date.now() / 150;
-            ctx.strokeStyle = '#facc15';
-            ctx.shadowColor = '#eab308';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(p.x - camX, p.y - camY, 15 + Math.sin(rotSpeed) * 3, 0, Math.PI * 2);
-            ctx.stroke();
+          for (let j = 0; j < 50; j++) {
+            const theta = j * 0.22 + spinAngle + Math.PI;
+            const r = j * 1.1 + 16;
+            const vx_m = Math.cos(theta) * r;
+            const vy_m = Math.sin(theta) * r;
+            if (j === 0) ctx.moveTo(vx_m, vy_m);
+            else ctx.lineTo(vx_m, vy_m);
           }
+          ctx.stroke();
           ctx.restore();
         }
-      }
-    });
 
-    // --- DRAW COSMIC PIRATES & PIRATE LASERS ---
-    piratesRef.current.forEach(pirate => {
-      const sx = pirate.x - camX;
-      const sy = pirate.y - camY;
+        ctx.rotate(p.angle);
 
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(pirate.angle);
-
-      // Red/Dark pirate fighter outline
-      ctx.strokeStyle = pirate.color;
-      ctx.fillStyle = '#1e1b4b'; // deep indigo fill
-      ctx.lineWidth = 2.5;
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = pirate.color;
-
-      ctx.beginPath();
-      ctx.moveTo(18, 0);
-      ctx.lineTo(-12, -15);
-      ctx.lineTo(-6, -6);
-      ctx.lineTo(-6, 6);
-      ctx.lineTo(-12, 15);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // Pirate engines
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(-10, -5, 4, 10);
-
-      // Label
-      ctx.save();
-      ctx.rotate(-pirate.angle);
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 9px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('☠️ CORSÁR', 0, -pirate.radius - 10);
-      ctx.restore();
-
-      ctx.restore();
-    });
-
-    pirateLasersRef.current.forEach(pl => {
-      const sx = pl.x - camX;
-      const sy = pl.y - camY;
-
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(pl.angle);
-
-      // Crimson rocket plasma blast
-      ctx.fillStyle = '#f43f5e';
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = '#f43f5e';
-      
-      // Draw standard double red bolt
-      ctx.beginPath();
-      ctx.arc(0, 0, pl.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-    });
-
-    // --- DRAW SOLAR STORM ATMOSPHERIC FX SLIDER PANEL ---
-    if (solarStormActiveRef.current) {
-      // Screen orange warning outline panel
-      ctx.save();
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
-      ctx.lineWidth = 15;
-      ctx.strokeRect(0, 0, width, height);
-
-      // Glowing solar warning banner text
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
-      ctx.fillRect(0, 35, width, 50);
-      
-      ctx.fillStyle = '#f97316';
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = '#ef4444';
-      ctx.font = 'bold 13px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('⚡ ! VAROVÁNÍ: AKTIVNÍ SOLÁRNÍ PROTUBERANCE - CHRAŇ SE ZA ASTEROIDY ! ⚡', width / 2, 60);
-      ctx.restore();
-    }
-
-    // --- F. PLAYER MINING SPACESHIP RENDER (DYNAMIC MIDPOINT CAMERA) ---
-    const drawPlayerShip = (p: any, playerNum: number, currentHull: number, currentShield: number, maxShieldVal: number) => {
-      const sx = p.x - camX;
-      const sy = p.y - camY;
-
-      ctx.save();
-      ctx.translate(sx, sy);
-
-      // Super Magnet Spinning Vortex VFX (Donkey Keeper)
-      if (superMagnetActiveRef.current > 0) {
-        ctx.save();
-        const spinAngle = Date.now() / 110;
-        ctx.lineWidth = 2.0;
-        ctx.shadowBlur = 10;
-        
-        // Helix 1: Cyan energy
-        ctx.strokeStyle = '#22d3ee';
-        ctx.shadowColor = '#22d3ee';
-        ctx.beginPath();
-        for (let j = 0; j < 50; j++) {
-          const theta = j * 0.22 + spinAngle;
-          const r = j * 1.1 + 16;
-          const vx = Math.cos(theta) * r;
-          const vy = Math.sin(theta) * r;
-          if (j === 0) ctx.moveTo(vx, vy);
-          else ctx.lineTo(vx, vy);
+        const isFlashing = p.invulnerableTime > 0 && Math.floor(p.invulnerableTime / 4) % 2 === 0;
+        if (isFlashing) {
+          ctx.globalAlpha = 0.35;
         }
-        ctx.stroke();
 
-        // Helix 2: Purple energy
-        ctx.strokeStyle = '#a855f7';
-        ctx.shadowColor = '#a855f7';
-        ctx.beginPath();
-        for (let j = 0; j < 50; j++) {
-          const theta = j * 0.22 + spinAngle + Math.PI;
-          const r = j * 1.1 + 16;
-          const vx = Math.cos(theta) * r;
-          const vy = Math.sin(theta) * r;
-          if (j === 0) ctx.moveTo(vx, vy);
-          else ctx.lineTo(vx, vy);
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = playerNum === 1 ? '#60a5fa' : '#a855f7';
+
+        if (p.thrusting) {
+          ctx.fillStyle = playerNum === 1 ? '#f97316' : '#ec4899';
+          ctx.beginPath();
+          ctx.moveTo(-16, -6);
+          ctx.lineTo(-28 - Math.random() * 8, 0);
+          ctx.lineTo(-16, 6);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#ffedd5';
+          ctx.beginPath();
+          ctx.moveTo(-16, -3);
+          ctx.lineTo(-22 - Math.random() * 4, 0);
+          ctx.lineTo(-16, 3);
+          ctx.closePath();
+          ctx.fill();
         }
-        ctx.stroke();
-        ctx.restore();
-      }
 
-      ctx.rotate(p.angle);
-
-      const isFlashing = p.invulnerableTime > 0 && Math.floor(p.invulnerableTime / 4) % 2 === 0;
-      if (isFlashing) {
-        ctx.globalAlpha = 0.35;
-      }
-
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = playerNum === 1 ? '#60a5fa' : '#a855f7';
-
-      // 1. Thruster rear fire pulse
-      if (p.thrusting) {
-        ctx.fillStyle = playerNum === 1 ? '#f97316' : '#ec4899';
-        ctx.beginPath();
-        ctx.moveTo(-16, -6);
-        ctx.lineTo(-28 - Math.random() * 8, 0);
-        ctx.lineTo(-16, 6);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = '#ffedd5';
-        ctx.beginPath();
-        ctx.moveTo(-16, -3);
-        ctx.lineTo(-22 - Math.random() * 4, 0);
-        ctx.lineTo(-16, 3);
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      // 2. Main Wings & fuselage
-      ctx.fillStyle = playerNum === 1 ? '#1e293b' : '#1e1b4b';
-      ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
-      ctx.lineWidth = 2.5;
-      ctx.lineJoin = 'miter';
-
-      ctx.beginPath();
-      ctx.moveTo(22, 0);
-      ctx.lineTo(-10, -16);
-      ctx.lineTo(-18, -12);
-      ctx.lineTo(-14, -5);
-      ctx.lineTo(-14, 5);
-      ctx.lineTo(-18, 12);
-      ctx.lineTo(-10, 16);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // 3. Cockpit canopy bubble
-      ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#ec4899';
-      ctx.beginPath();
-      ctx.moveTo(10, 0);
-      ctx.lineTo(0, -5);
-      ctx.lineTo(-6, -3);
-      ctx.lineTo(-6, 3);
-      ctx.lineTo(0, 5);
-      ctx.closePath();
-      ctx.fill();
-
-      // 4. Heavy weapon muzzle rails based on Upgrade level!
-      ctx.strokeStyle = playerNum === 1 ? '#f87171' : '#c084fc';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      
-      if (upgradesRef.current.laserLevel === 1) {
-        ctx.moveTo(6, 0);
-        ctx.lineTo(18, 0);
-      } else if (upgradesRef.current.laserLevel === 2) {
-        ctx.moveTo(-2, -8); ctx.lineTo(16, -8);
-        ctx.moveTo(-2, 8); ctx.lineTo(16, 8);
-      } else if (upgradesRef.current.laserLevel === 3) {
-        ctx.moveTo(-2, -10); ctx.lineTo(14, -10);
-        ctx.moveTo(6, 0); ctx.lineTo(19, 0);
-        ctx.moveTo(-2, 10); ctx.lineTo(14, 10);
-      } else if (upgradesRef.current.laserLevel === 4) {
-        ctx.strokeStyle = playerNum === 1 ? '#c084fc' : '#ec4899';
-        ctx.moveTo(-5, -6); ctx.lineTo(18, -4);
-        ctx.moveTo(-5, 6); ctx.lineTo(18, 4);
-        ctx.moveTo(5, -2); ctx.lineTo(21, 0);
-        ctx.moveTo(5, 2); ctx.lineTo(21, 0);
-      } else {
-        // Level 5 Gold Quantum barrels!
-        ctx.strokeStyle = '#facc15';
+        ctx.fillStyle = playerNum === 1 ? '#1e293b' : '#1e1b4b';
+        ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
         ctx.lineWidth = 2.5;
-        ctx.moveTo(-5, -12); ctx.lineTo(14, -10);
-        ctx.moveTo(-5, 12); ctx.lineTo(14, 10);
-        ctx.moveTo(-1, -6); ctx.lineTo(18, -4);
-        ctx.moveTo(-1, 6); ctx.lineTo(18, 4);
-        ctx.moveTo(8, 0); ctx.lineTo(24, 0);
-      }
-      ctx.stroke();
+        ctx.lineJoin = 'miter';
 
-      // 5. Active Energy Shield Bubble Render
-      if (upgradesRef.current.shieldLevel > 0 && currentShield > 0) {
+        ctx.beginPath();
+        ctx.moveTo(22, 0);
+        ctx.lineTo(-10, -16);
+        ctx.lineTo(-18, -12);
+        ctx.lineTo(-14, -5);
+        ctx.lineTo(-14, 5);
+        ctx.lineTo(-18, 12);
+        ctx.lineTo(-10, 16);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#ec4899';
+        ctx.beginPath();
+        ctx.moveTo(10, 0);
+        ctx.lineTo(0, -5);
+        ctx.lineTo(-6, -3);
+        ctx.lineTo(-6, 3);
+        ctx.lineTo(0, 5);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = playerNum === 1 ? '#f87171' : '#c084fc';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        if (upgradesRef.current.laserLevel === 1) {
+          ctx.moveTo(6, 0);
+          ctx.lineTo(18, 0);
+        } else if (upgradesRef.current.laserLevel === 2) {
+          ctx.moveTo(-2, -8); ctx.lineTo(16, -8);
+          ctx.moveTo(-2, 8); ctx.lineTo(16, 8);
+        } else if (upgradesRef.current.laserLevel === 3) {
+          ctx.moveTo(-2, -10); ctx.lineTo(14, -10);
+          ctx.moveTo(6, 0); ctx.lineTo(19, 0);
+          ctx.moveTo(-2, 10); ctx.lineTo(14, 10);
+        } else if (upgradesRef.current.laserLevel === 4) {
+          ctx.strokeStyle = playerNum === 1 ? '#c084fc' : '#ec4899';
+          ctx.moveTo(-5, -6); ctx.lineTo(18, -4);
+          ctx.moveTo(-5, 6); ctx.lineTo(18, 4);
+          ctx.moveTo(5, -2); ctx.lineTo(21, 0);
+          ctx.moveTo(5, 2); ctx.lineTo(21, 0);
+        } else {
+          ctx.strokeStyle = '#facc15';
+          ctx.lineWidth = 2.5;
+          ctx.moveTo(-5, -12); ctx.lineTo(14, -10);
+          ctx.moveTo(-5, 12); ctx.lineTo(14, 10);
+          ctx.moveTo(-1, -6); ctx.lineTo(18, -4);
+          ctx.moveTo(-1, 6); ctx.lineTo(18, 4);
+          ctx.moveTo(8, 0); ctx.lineTo(24, 0);
+        }
+        ctx.stroke();
+
+        if (upgradesRef.current.shieldLevel > 0 && currentShield > 0) {
+          ctx.save();
+          ctx.rotate(-p.angle);
+          ctx.strokeStyle = playerNum === 1 
+            ? `rgba(56, 189, 248, ${0.15 + (currentShield / maxShieldVal) * 0.4})`
+            : `rgba(168, 85, 247, ${0.15 + (currentShield / maxShieldVal) * 0.4})`;
+          ctx.shadowColor = playerNum === 1 ? '#38bdf8' : '#a855f7';
+          ctx.shadowBlur = 10;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.radius + 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         ctx.save();
         ctx.rotate(-p.angle);
-        ctx.strokeStyle = playerNum === 1 
-          ? `rgba(56, 189, 248, ${0.15 + (currentShield / maxShieldVal) * 0.4})`
-          : `rgba(168, 85, 247, ${0.15 + (currentShield / maxShieldVal) * 0.4})`;
-        ctx.shadowColor = playerNum === 1 ? '#38bdf8' : '#a855f7';
-        ctx.shadowBlur = 10;
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        ctx.arc(0, 0, p.radius + 8, 0, Math.PI * 2);
-        ctx.stroke();
+        ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Hráč ${playerNum}`, 0, -p.radius - 12);
         ctx.restore();
-      }
 
-      // Badge tag label
-      ctx.save();
-      ctx.rotate(-p.angle);
-      ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
-      ctx.font = '9px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(`Hráč ${playerNum}`, 0, -p.radius - 12);
-      ctx.restore();
+        ctx.restore();
+      };
 
-      ctx.restore();
-    };
+      const drawPlayerShipWrecked = (p: any, playerNum: 1 | 2, reviveProgress: number) => {
+        const sx = p.x - camX;
+        const sy = p.y - camY;
 
-    const drawPlayerShipWrecked = (p: any, playerNum: 1 | 2, reviveProgress: number) => {
-      const sx = p.x - camX;
-      const sy = p.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(p.angle);
 
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(p.angle);
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = '#334155';
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 2.0;
 
-      // Downed ship transparency
-      ctx.globalAlpha = 0.45;
-
-      // Dark gray color scheme representing a silent, damaged ship
-      ctx.fillStyle = '#334155'; // slate-700
-      ctx.strokeStyle = '#475569'; // slate-600
-      ctx.lineWidth = 2.0;
-
-      ctx.beginPath();
-      ctx.moveTo(22, 0);
-      ctx.lineTo(-10, -16);
-      ctx.lineTo(-18, -12);
-      ctx.lineTo(-14, -5);
-      ctx.lineTo(-14, 5);
-      ctx.lineTo(-18, 12);
-      ctx.lineTo(-10, 16);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // Damaged cockpit
-      ctx.fillStyle = '#1e293b'; 
-      ctx.beginPath();
-      ctx.moveTo(10, 0);
-      ctx.lineTo(0, -5);
-      ctx.lineTo(-6, -3);
-      ctx.lineTo(-6, 3);
-      ctx.lineTo(0, 5);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.restore();
-
-      // Standalone overlay graphics on top of the ship (independent of ship facing rotation)
-      ctx.save();
-      ctx.translate(sx, sy);
-
-      // Pulsative scale oscillation
-      const pulse = 1.0 + Math.sin(Date.now() * 0.009) * 0.15;
-
-      // Beacon ring
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(0, 0, p.radius * 1.5 * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // S.O.S label text
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 11px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('S.O.S.', 0, -p.radius - 12);
-
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '9px monospace';
-      ctx.fillText('PŘILEŤ PRO OŽIVENÍ', 0, p.radius + 18);
-
-      // Revival Circle Ring
-      if (reviveProgress > 0) {
-        ctx.strokeStyle = '#22c55e';
-        ctx.lineWidth = 3.5;
         ctx.beginPath();
-        // Ring progresses from top
-        ctx.arc(0, 0, p.radius + 8, -Math.PI / 2, -Math.PI / 2 + (reviveProgress / 150) * Math.PI * 2);
+        ctx.moveTo(22, 0);
+        ctx.lineTo(-10, -16);
+        ctx.lineTo(-18, -12);
+        ctx.lineTo(-14, -5);
+        ctx.lineTo(-14, 5);
+        ctx.lineTo(-18, 12);
+        ctx.lineTo(-10, 16);
+        ctx.closePath();
+        ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = '#22c55e';
-        ctx.font = 'bold 10px monospace';
-        ctx.fillText(`${Math.round((reviveProgress / 150) * 100)}%`, 0, -p.radius - 24);
-      }
+        ctx.fillStyle = '#1e293b'; 
+        ctx.beginPath();
+        ctx.moveTo(10, 0);
+        ctx.lineTo(0, -5);
+        ctx.lineTo(-6, -3);
+        ctx.lineTo(-6, 3);
+        ctx.lineTo(0, 5);
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.restore();
-    };
+        ctx.restore();
 
-    // Render all active players
-    playersRef.current.forEach(p => {
-      if (p.hull > 0) {
-        const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
-        drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
-      } else {
-        // Render wrecked outline if multiple players are active
-        if (playersRef.current.length > 1) {
-          drawPlayerShipWrecked(p, p.playerNum, p.reviveTimer);
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        const pulse = 1.0 + Math.sin(Date.now() * 0.009) * 0.15;
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * 1.5 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('S.O.S.', 0, -p.radius - 12);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '9px monospace';
+        ctx.fillText('PŘILEŤ PRO OŽIVENÍ', 0, p.radius + 18);
+
+        if (reviveProgress > 0) {
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 3.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.radius + 8, -Math.PI / 2, -Math.PI / 2 + (reviveProgress / 150) * Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = '#22c55e';
+          ctx.font = 'bold 10px monospace';
+          ctx.fillText(`${Math.round((reviveProgress / 150) * 100)}%`, 0, -p.radius - 24);
         }
-      }
-    });
 
-    // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE (SUBTLY DRAW RANGE IN SCREEN CARD) ---
-    if (upgradesRef.current.magnetLevel > 1 && (keysPressed.current['ShiftLeft'] || keysPressed.current['ShiftRight'])) {
-      let drawMagnetRadius = 100;
-      if (upgradesRef.current.magnetLevel === 2) drawMagnetRadius = 180;
-      else if (upgradesRef.current.magnetLevel === 3) drawMagnetRadius = 260;
-      else if (upgradesRef.current.magnetLevel === 4) drawMagnetRadius = 340;
-      else if (upgradesRef.current.magnetLevel === 5) drawMagnetRadius = 1200;
-      else if (upgradesRef.current.magnetLevel >= 6) drawMagnetRadius = 8000;
+        ctx.restore();
+      };
 
       playersRef.current.forEach(p => {
         if (p.hull > 0) {
-          ctx.save();
-          ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([6, 8]);
-          ctx.beginPath();
-          ctx.arc(p.x - camX, p.y - camY, drawMagnetRadius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
+          const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
+          drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
+        } else {
+          if (playersRef.current.length > 1) {
+            drawPlayerShipWrecked(p, p.playerNum, p.reviveTimer);
+          }
         }
       });
+
+      // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE ---
+      if (upgradesRef.current.magnetLevel > 1 && (keysPressed.current['ShiftLeft'] || keysPressed.current['ShiftRight'])) {
+        let drawMagnetRadius = 100;
+        if (upgradesRef.current.magnetLevel === 2) drawMagnetRadius = 180;
+        else if (upgradesRef.current.magnetLevel === 3) drawMagnetRadius = 260;
+        else if (upgradesRef.current.magnetLevel === 4) drawMagnetRadius = 340;
+        else if (upgradesRef.current.magnetLevel === 5) drawMagnetRadius = 1200;
+        else if (upgradesRef.current.magnetLevel >= 6) drawMagnetRadius = 8000;
+
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([6, 8]);
+            ctx.beginPath();
+            ctx.arc(p.x - camX, p.y - camY, drawMagnetRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+      }
+
+      ctx.restore(); // Restore context origin shift
+      ctx.restore(); // Restore master clip
+    };
+
+    // Apply dynamic split-screen layout if two or more players are active
+    if (playersRef.current.length > 1) {
+      const activePlayers = playersRef.current.slice(0, 4);
+      const count = activePlayers.length;
+
+      if (count === 2) {
+        const p1 = activePlayers[0];
+        const p2 = activePlayers[1];
+        const distance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const splitThreshold = 550; // Splitting trigger distance in pixels
+
+        if (distance > splitThreshold) {
+          const halfW = width / 2;
+
+          // 1. Left: Player 1 Front View
+          drawSingleViewport(p1, 0, 0, halfW, height, false);
+          // 2. Right: Player 2 Front View
+          drawSingleViewport(p2, halfW, 0, halfW, height, false);
+
+          // Vertical separation line
+          ctx.save();
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 3.0;
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.moveTo(halfW, 0);
+          ctx.lineTo(halfW, height);
+          ctx.stroke();
+
+          // Labels
+          ctx.font = 'bold 9px monospace';
+          ctx.shadowBlur = 4;
+          ctx.fillStyle = '#38bdf8';
+          ctx.shadowColor = '#06b6d4';
+          ctx.textAlign = 'right';
+          ctx.fillText('📡 PANEL H1 ', halfW - 12, 22);
+          ctx.fillStyle = '#c084fc';
+          ctx.shadowColor = '#a855f7';
+          ctx.textAlign = 'left';
+          ctx.fillText(' PANEL H2 📡', halfW + 12, 22);
+          ctx.restore();
+        } else {
+          // Close together: Shared Camera mode across the entire screen (1 joint window)
+          const midpointPlayer = {
+            ...p1, // spread structure to replicate full state
+            x: (p1.x + p2.x) / 2,
+            y: (p1.y + p2.y) / 2
+          };
+          drawSingleViewport(midpointPlayer, 0, 0, width, height, false);
+
+          // Connection indicator
+          ctx.save();
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.75)';
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 4;
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('🔗 SYNC CAM PROPOJENÍ (Rozdělení obrazovky na 2 při vzdálení)', width / 2, 24);
+          ctx.restore();
+        }
+      } else if (count === 3) {
+        // 3 Players layout - split into 3 columns side-by-side
+        const oneThirdW = width / 3;
+        drawSingleViewport(activePlayers[0], 0, 0, oneThirdW, height, false);
+        drawSingleViewport(activePlayers[1], oneThirdW, 0, oneThirdW, height, false);
+        drawSingleViewport(activePlayers[2], 2 * oneThirdW, 0, oneThirdW, height, false);
+
+        // Divider lines
+        ctx.save();
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = '#06b6d4';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(oneThirdW, 0);
+        ctx.lineTo(oneThirdW, height);
+        ctx.moveTo(2 * oneThirdW, 0);
+        ctx.lineTo(2 * oneThirdW, height);
+        ctx.stroke();
+
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = '#38bdf8';
+        ctx.textAlign = 'center';
+        ctx.fillText('PANEL H1', oneThirdW / 2, 22);
+        ctx.fillStyle = '#c084fc';
+        ctx.fillText('PANEL H2', oneThirdW + oneThirdW / 2, 22);
+        ctx.fillStyle = '#fb923c';
+        ctx.fillText('PANEL H3', 2 * oneThirdW + oneThirdW / 2, 22);
+        ctx.restore();
+      } else {
+        // 4 Players layout - split into 2x2 grid
+        const halfW = width / 2;
+        const halfH = height / 2;
+        drawSingleViewport(activePlayers[0], 0, 0, halfW, halfH, false);
+        drawSingleViewport(activePlayers[1], halfW, 0, halfW, halfH, false);
+        drawSingleViewport(activePlayers[2], 0, halfH, halfW, halfH, false);
+        drawSingleViewport(activePlayers[3], halfW, halfH, halfW, halfH, false);
+
+        // Grid lines
+        ctx.save();
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = '#06b6d4';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(halfW, 0); ctx.lineTo(halfW, height);
+        ctx.moveTo(0, halfH); ctx.lineTo(width, halfH);
+        ctx.stroke();
+
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = '#38bdf8';
+        ctx.textAlign = 'center';
+        ctx.fillText('PANEL H1', halfW / 2, 22);
+        ctx.fillStyle = '#c084fc';
+        ctx.fillText('PANEL H2', halfW + halfW / 2, 22);
+        ctx.fillStyle = '#fb923c';
+        ctx.fillText('PANEL H3', halfW / 2, halfH + 22);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillText('PANEL H4', halfW + halfW / 2, halfH + 22);
+        ctx.restore();
+      }
+    } else if (playersRef.current.length === 1) {
+      // Standard Single Viewport mode
+      drawSingleViewport(playersRef.current[0], 0, 0, width, height, false);
     }
   };
 
@@ -3625,6 +3791,38 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {/* DISEMBARK EXPEDITION SURFACE EXPLORER BANNER */}
+          {activePlayers.some(p => p.anchoredAsteroidId) && (
+            <div className="w-full max-w-lg sm:max-w-2xl mx-auto pointer-events-auto select-none self-center mb-2">
+              <div className="bg-slate-950/95 border-2 border-cyan-500/70 p-3.5 rounded-2xl shadow-2xl flex flex-col sm:flex-row justify-between items-center gap-3 backdrop-blur-md animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-cyan-950 border border-cyan-400 flex items-center justify-center text-lg shadow-[0_0_8px_rgba(34,211,238,0.3)]">
+                    🛰️
+                  </div>
+                  <div className="text-left font-mono">
+                    <span className="text-[9px] text-cyan-400 font-extrabold uppercase tracking-widest block leading-3">Přistáno na tělesu</span>
+                    <span className="text-sm font-black text-slate-100 uppercase tracking-tight leading-4 block">
+                      {findAnchoredAsteroid()?.name || 'Neznámý Asteroid'}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block leading-none mt-1 font-sans">
+                      Drahokamy nalezeny! Vstup se svým kosmonautem do minihry s kruhovou gravitací.
+                    </span>
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={handleOpenExplorer}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 active:bg-cyan-600 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-cyan-500/20 cursor-pointer flex items-center justify-center gap-1.5"
+                  id="disembark-surface-button"
+                >
+                  <span>Prozkoumat [Enter / X]</span>
+                  <ChevronRight className="w-4 h-4 text-slate-950" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* BOTTOM ROW STATE METERS: Hull & Shields */}
           <div className="w-full max-w-sm sm:max-w-4xl mx-auto pointer-events-auto flex flex-wrap gap-3 md:gap-4 justify-center items-stretch select-none self-center">
@@ -3960,6 +4158,18 @@ export default function App() {
         currentShield={shield}
         maxShield={maxShield}
       />
+
+      {/* 7. CIRCULAR GRAVITY ASTEROID EXPLORER MINIGAME OVERLAY */}
+      {explorerAsteroidData && (
+        <AsteroidExplorer
+          isOpen={isExplorerOpen}
+          onClose={handleCloseExplorer}
+          asteroidType={explorerAsteroidData.type}
+          asteroidRadius={explorerAsteroidData.radius}
+          asteroidColor={explorerAsteroidData.color}
+          asteroidName={explorerAsteroidData.name}
+        />
+      )}
 
     </div>
   );
