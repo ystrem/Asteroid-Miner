@@ -17,8 +17,17 @@ Za vytěžené suroviny si v mezizvězdném obchodě (otevíraném automaticky m
 
 ## 🔥 Unikátní Mechaniky (Inspirované hrou Donkey Keeper)
 
-### 1. Interaktivní Obrazovka s Midpoint Scroll
-Kamera se automaticky přizpůsobuje a plynule scrolluje na středový bod (midpoint) všech aktivně hrajících lodí. Asteroidy se procedurálně generují a wrappují v oběžném pásu kolem letky, což odstraňuje otravné stěny a dává vám nekonečný vesmírný prostor k manévrování.
+### 1. Interaktivní Obrazovka s Dynamickým Dělením (Split-Screen)
+Kamera se inteligentně a plynule přizpůsobuje počtu aktivních hráčů na bitevním poli:
+* **Počet oken vždy odpovídá počtu hráčů:** Systém dynamically přizpůsobuje rozvržení obrazovky tak, aby nehýřil místem.
+* **1 Hráč:** Tradiční zobrazení na celou obrazovku se zaměřením na vaši loď.
+* **2 Hráči:**
+  * **Společné sdílené zobrazení (1 okno):** Pokud letíte blízko sebe (vzdálenost je pod 550 px), kamera zůstává spojená a plynule se posouvá na společný středový bod (midpoint). Na HUDu svítí azurový indikátor `🔗 SYNC CAM PROPOJENÍ`.
+  * **Plynulé rozdělení (2 okna):** Když se rozletíte daleko od sebe, obrazovka se rozdělí přesně na **2 samostatné poloviny (pravá/levá)**. Každý letec má svůj vlastní samostatný výpůjční sektor (`📡 PANEL H1` a `📡 PANEL H2`). Dva hráči tak nikdy nemají zbytečná čtyři okna.
+* **3 Hráči:** Obrazovka se plynule dělí na **3 svislé sloupce (3 okna)**, jeden pro každého pilota.
+* **4 Hráči:** Hra se automaticky přepne do ultra-přehledného režimu mřížky **2x2 panelů (4 okna)**.
+
+Asteroidy se procedurálně generují a wrappují v oběžném pásu kolem letky, což odstraňuje otravné stěny a dává vám nekonečný vesmírný prostor k manévrování.
 
 ### 2. Teplotní Šok (Kombo Systém)
 * **Princip:** Pokud prostřelíte **Magmatický asteroid** (červený), váš laserový paprsek se super-zahřeje (změní barvu na oranžovou). Pokud tento zahřátý paprsek zasáhne **Ledový asteroid** (modrý/bílý), dojde k okamžitému prasknutí mrazem, což vyvolá masivní oblak páry a udělí **2.2x bonusové poškození (Teplotní Šok)**!
