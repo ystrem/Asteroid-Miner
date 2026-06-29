@@ -17,7 +17,9 @@ import {
   OreType,
   Player,
   Pirate,
-  PirateLaser
+  PirateLaser,
+  SockEntity,
+  Boss
 } from './types';
 import { 
   playLaserSound, 
@@ -59,7 +61,8 @@ import {
   HelpCircle,
   Gamepad,
   User,
-  Users
+  Users,
+  Skull
 } from 'lucide-react';
 
 const ASTEROID_COLORS = {
@@ -111,6 +114,12 @@ export default function App() {
   const [pulseCooldown, setPulseCooldown] = useState<number>(0);
   const [superMagnetCooldown, setSuperMagnetCooldown] = useState<number>(0);
   const [superMagnetActive, setSuperMagnetActive] = useState<number>(0);
+  const [sockCooldown, setSockCooldown] = useState<number>(0);
+
+  // Boss Fight State
+  const [isBossFightActive, setIsBossFightActive] = useState<boolean>(false);
+  const [showBossDefeatModal, setShowBossDefeatModal] = useState<boolean>(false);
+  const [showBossVictoryModal, setShowBossVictoryModal] = useState<boolean>(false);
 
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -125,6 +134,10 @@ export default function App() {
 
   const asteroidsRef = useRef<Asteroid[]>([]);
   const lasersRef = useRef<Laser[]>([]);
+  const socksRef = useRef<SockEntity[]>([]);
+  const dronesRef = useRef<any[]>([]);
+  const bossRef = useRef<Boss | null>(null);
+  const wormholeRef = useRef<any | null>(null);
   const oresRef = useRef<Ore[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const starsRef = useRef<Star[]>([]);
@@ -156,6 +169,8 @@ export default function App() {
   const pulseCooldownRef = useRef<number>(0);
   const superMagnetCooldownRef = useRef<number>(0);
   const superMagnetActiveRef = useRef<number>(0);
+  const sockCooldownRef = useRef<number>(0);
+  const isBossFightActiveRef = useRef<boolean>(false);
 
   const gameModeRef = useRef<'single' | 'coop'>('single');
   const difficultyRef = useRef<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
@@ -435,9 +450,13 @@ export default function App() {
         } else if (code === 'KeyR' || code === 'Digit7' || code === 'Numpad7') {
           const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
           if (p1) triggerSuperMagnetVacuum(p1.playerNum);
+        } else if (code === 'KeyY' || code === 'KeyZ' || code === 'Digit6' || code === 'Numpad6') {
+          // KeyY / KeyZ (handling QWERTY and QWERTZ layouts) or Digit 6
+          const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+          if (p1) triggerStinkySock(p1.playerNum);
         }
 
-        // Player 2 abilities mapping (Numbers 1, 2, 3)
+        // Player 2 abilities mapping (Numbers 1, 2, 3, 5)
         if (code === 'Digit1' || code === 'Numpad1') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerChainLightning(p2.playerNum);
@@ -447,6 +466,9 @@ export default function App() {
         } else if (code === 'Digit3' || code === 'Numpad3') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerSuperMagnetVacuum(p2.playerNum);
+        } else if (code === 'Digit5' || code === 'Numpad5') {
+          const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+          if (p2) triggerStinkySock(p2.playerNum);
         }
       }
 
@@ -770,7 +792,7 @@ export default function App() {
   };
 
   // --- LAUNCH GAME RUN ---
-  const handleStartGame = () => {
+  const handleStartGame = (startBossFight: boolean = false) => {
     // Lazily spin up our AudioContext via user trigger gesture
     playLaserSound(1);
 
@@ -899,6 +921,9 @@ export default function App() {
     // Initial entities clear
     asteroidsRef.current = [];
     lasersRef.current = [];
+    socksRef.current = [];
+    dronesRef.current = [];
+    wormholeRef.current = null;
     oresRef.current = [];
     particlesRef.current = [];
     piratesRef.current = [];
@@ -908,8 +933,44 @@ export default function App() {
     solarStormTimeRef.current = 1500;
     solarStormDurationRef.current = 0;
 
-    // Populate asteroid cloud
-    populateAsteroidBelt(15);
+    if (startBossFight) {
+      isBossFightActiveRef.current = true;
+      setIsBossFightActive(true);
+      
+      // Open Upgrade Shop right as we start the boss fight so they can buy!
+      setIsShopOpen(true);
+      isShopOpenRef.current = true;
+      
+      let bossMaxHp = 6000; // Medium difficulty
+      if (difficultyRef.current === 'easy') bossMaxHp = 3000;
+      else if (difficultyRef.current === 'hard') bossMaxHp = 10000;
+      else if (difficultyRef.current === 'nightmare') bossMaxHp = 16000;
+
+      bossRef.current = {
+        x: 0,
+        y: -300,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        hp: bossMaxHp,
+        maxHp: bossMaxHp,
+        radius: 90,
+        state: 'intro',
+        lastFired: 0,
+        lastShieldFired: 0,
+        lastValuableMove: Date.now() + 4000, // Trigger first valuable move 4s after start
+      };
+
+      // Spawn 4 normal asteroids to act as protective cover or miner fields
+      populateAsteroidBelt(4);
+    } else {
+      isBossFightActiveRef.current = false;
+      setIsBossFightActive(false);
+      bossRef.current = null;
+      
+      // Populate standard asteroid cloud
+      populateAsteroidBelt(15);
+    }
 
     // Launch game loop animations
     if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
@@ -937,6 +998,16 @@ export default function App() {
     saveStats(updatedStats);
 
     addGainNotification(`ZAKOUPENO: ${id === 'laserLevel' ? 'Úroveň laseru ' : id === 'magnetLevel' ? 'Úroveň magnetu ' : 'Úroveň modulu '}${nextLevel}`, '#f59e0b');
+  };
+
+  const getScoreMultiplierFromRef = () => {
+    const multLvl = upgradesRef.current.scoreMultiplierLevel || 1;
+    const laserLvl = upgradesRef.current.laserLevel || 1;
+    let mult = 1 + (multLvl - 1) * 0.25;
+    if (laserLvl >= 7) {
+      mult += 1.0;
+    }
+    return mult;
   };
 
   const handleRepair = (cost: number, healAmount: number) => {
@@ -1192,9 +1263,13 @@ export default function App() {
     
     // Fire rates depend on weapon tier
     let cooldown = 350;
-    if (upgradesRef.current.laserLevel === 2) cooldown = 280;
-    if (upgradesRef.current.laserLevel === 3) cooldown = 200;
-    if (upgradesRef.current.laserLevel === 4) cooldown = 300;
+    const lLevel = upgradesRef.current.laserLevel || 1;
+    if (lLevel === 2) cooldown = 280;
+    if (lLevel === 3) cooldown = 200;
+    if (lLevel === 4) cooldown = 300;
+    if (lLevel === 5) cooldown = 180;
+    if (lLevel === 6) cooldown = 260;
+    if (lLevel >= 7) cooldown = 160;
 
     if (now - player.lastFired < cooldown) return;
     player.lastFired = now;
@@ -1204,7 +1279,7 @@ export default function App() {
     let width = 2;
     let radius = 3;
 
-    playLaserSound(upgradesRef.current.laserLevel);
+    playLaserSound(Math.min(5, lLevel));
 
     const cos = Math.cos(player.angle);
     const sin = Math.sin(player.angle);
@@ -1219,7 +1294,7 @@ export default function App() {
     // Use player-assigned color as core bullet color, adapting hues beautifully!
     const bulletColor = player.color;
 
-    if (upgradesRef.current.laserLevel === 1) {
+    if (lLevel === 1) {
       // Level 1: Simple laser bullet
       const laser: Laser = {
         id: Math.random().toString(36).substring(2, 9),
@@ -1239,7 +1314,7 @@ export default function App() {
       };
       lasersRef.current.push(laser);
     } 
-    else if (upgradesRef.current.laserLevel === 2) {
+    else if (lLevel === 2) {
       // Level 2: Heavy wider laser
       const laser: Laser = {
         id: Math.random().toString(36).substring(2, 9),
@@ -1259,7 +1334,7 @@ export default function App() {
       };
       lasersRef.current.push(laser);
     } 
-    else if (upgradesRef.current.laserLevel === 3) {
+    else if (lLevel === 3) {
       // Level 3: Triple Shot (We shoot 3 lasers: 1 forward, 2 angled slightly)
       const angles = [0, -0.15, 0.15]; // spread in radians (~10 degrees angles)
       angles.forEach(offsetAngle => {
@@ -1285,7 +1360,7 @@ export default function App() {
         lasersRef.current.push(laser);
       });
     } 
-    else if (upgradesRef.current.laserLevel === 4) {
+    else if (lLevel === 4) {
       // Level 4: Heavy piercing electromagnetic laser beam
       const laser: Laser = {
         id: Math.random().toString(36).substring(2, 9),
@@ -1305,7 +1380,7 @@ export default function App() {
       };
       lasersRef.current.push(laser);
     }
-    else {
+    else if (lLevel === 5) {
       // Level 5: Quantum Cascade (5 lasers!)
       // 1. Heavy central piercing laser
       const laserCenter: Laser = {
@@ -1371,6 +1446,58 @@ export default function App() {
           color: bulletColor,
           lifetime: 0,
           maxLifetime: 75,
+        };
+        lasersRef.current.push(laser);
+      });
+    }
+    else if (lLevel === 6) {
+      // Level 6: Super-Nova dělo (7 lasers!)
+      const angles = [-0.36, -0.24, -0.12, 0, 0.12, 0.24, 0.36];
+      angles.forEach((offsetAngle, idx) => {
+        const theta = player.angle + offsetAngle;
+        const sCos = Math.cos(theta);
+        const sSin = Math.sin(theta);
+        const laser: Laser = {
+          id: Math.random().toString(36).substring(2, 9),
+          x: player.x + sCos * 22,
+          y: player.y + sSin * 22,
+          vx: sCos * 11.5,
+          vy: sSin * 11.5,
+          angle: theta,
+          damage: 5.5,
+          isPiercing: idx === 3, // central one is piercing
+          piercedAsteroidIds: [],
+          radius: idx === 3 ? 6.5 : 4.5,
+          width: idx === 3 ? 5.5 : 3.5,
+          color: idx === 3 ? '#ef4444' : '#f59e0b',
+          lifetime: 0,
+          maxLifetime: 80,
+        };
+        lasersRef.current.push(laser);
+      });
+    }
+    else {
+      // Level 7+: Hyperprostorová anihilace (9 lasers!)
+      const angles = [-0.48, -0.36, -0.24, -0.12, 0, 0.12, 0.24, 0.36, 0.48];
+      angles.forEach((offsetAngle, idx) => {
+        const theta = player.angle + offsetAngle;
+        const sCos = Math.cos(theta);
+        const sSin = Math.sin(theta);
+        const laser: Laser = {
+          id: Math.random().toString(36).substring(2, 9),
+          x: player.x + sCos * 22,
+          y: player.y + sSin * 22,
+          vx: sCos * 13,
+          vy: sSin * 13,
+          angle: theta,
+          damage: 7.5,
+          isPiercing: idx % 2 === 0, // Alternating piercing
+          piercedAsteroidIds: [],
+          radius: 6,
+          width: 5,
+          color: idx % 2 === 0 ? '#06b6d4' : '#84cc16', // Neon blue and toxic green
+          lifetime: 0,
+          maxLifetime: 90,
         };
         lasersRef.current.push(laser);
       });
@@ -1935,6 +2062,197 @@ export default function App() {
       addGainNotification(`☠️ DETEKOVÁNA DETACHOVANÁ PIRÁTSKÁ LOĎ!`, '#f43f5e');
     }
 
+    // --- BOSS FIGHT PHYSICS STATE MACHINE ---
+    if (isBossFightActiveRef.current && bossRef.current) {
+      const boss = bossRef.current;
+      
+      // Update boss state based on phase or HP
+      if (boss.state === 'intro') {
+        // Move towards center y=-150 slowly
+        const dy = -150 - boss.y;
+        boss.y += dy * 0.02;
+        if (Math.abs(dy) < 5) {
+          boss.state = 'active';
+          addGainNotification("⚠️ POZOR: GENERÁL KORZÁRŮ PŘISTÁL VE VAŠEM SEKTORU!", "#ef4444");
+        }
+      } else {
+        // Boss Active movement: hover left and right and bounce subtly
+        boss.x += Math.sin(Date.now() / 2500) * 1.5;
+        boss.y += Math.cos(Date.now() / 1500) * 0.5;
+
+        // Rotate towards the closest player
+        let closestP: Player | null = null;
+        let closestDist = 999999;
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            const d = Math.hypot(p.x - boss.x, p.y - boss.y);
+            if (d < closestDist) {
+              closestDist = d;
+              closestP = p;
+            }
+          }
+        });
+
+        if (closestP) {
+          const p = closestP as Player;
+          const targetAngle = Math.atan2(p.y - boss.y, p.x - boss.x);
+          let dAngle = targetAngle - boss.angle;
+          while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+          while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+          boss.angle += dAngle * 0.03;
+          
+          // --- BOSS VALUABLE SUPER MOVE DETECTOR ---
+          if (Date.now() - (boss.lastValuableMove || 0) > 12000) {
+            boss.lastValuableMove = Date.now();
+            playExplosionSound('huge');
+            
+            // On-screen alarm notification
+            addGainNotification("⚠️ GENERÁL KORZÁRŮ AKTIVOVAL KOSMICKÝ GEJZÍR SUROVIN!", "#a855f7");
+            addGainNotification("Vyhýbejte se super-koulím a sesbírejte diamanty!", "#38bdf8");
+
+            // 1. Fire circular high-velocity pattern (12 bullets!)
+            const count = 12;
+            for (let i = 0; i < count; i++) {
+              const ang = (i * Math.PI * 2) / count;
+              pirateLasersRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: boss.x + Math.cos(ang) * 90,
+                y: boss.y + Math.sin(ang) * 90,
+                vx: Math.cos(ang) * 9.5,
+                vy: Math.sin(ang) * 9.5,
+                angle: ang,
+                radius: 8,
+                color: '#c084fc', // high-damage glowing purple/pink energy balls
+                lifetime: 0,
+                maxLifetime: 150
+              });
+            }
+
+            // 2. Spawn extremely valuable resources around the boss body!
+            // 2x Diamond, 1x Obsidian, 2x Crystal (each now multiplied in value when gathered!)
+            const resourceTypes: ('crystal' | 'diamond' | 'obsidian')[] = ['diamond', 'obsidian', 'diamond', 'crystal', 'crystal'];
+            resourceTypes.forEach((oType, idx) => {
+              const rAng = (idx * Math.PI * 2) / resourceTypes.length + Math.random() * 0.4;
+              const dist = 125;
+              const rx = boss.x + Math.cos(rAng) * dist;
+              const ry = boss.y + Math.sin(rAng) * dist;
+              
+              // Gentle outward drift velocity
+              const rvx = Math.cos(rAng) * (Math.random() * 2.0 + 1.2);
+              const rvy = Math.sin(rAng) * (Math.random() * 2.0 + 1.2);
+
+              const rawOre = createOreEntity(rx, ry, oType);
+              rawOre.vx = rvx;
+              rawOre.vy = rvy;
+              oresRef.current.push(rawOre);
+            });
+
+            // Giant spark/plasma discharge cloud
+            for (let i = 0; i < 35; i++) {
+              const sAng = Math.random() * Math.PI * 2;
+              const sSpd = Math.random() * 8 + 3;
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: boss.x,
+                y: boss.y,
+                vx: Math.cos(sAng) * sSpd,
+                vy: Math.sin(sAng) * sSpd,
+                color: '#a855f7',
+                size: Math.random() * 4.5 + 2,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 45
+              });
+            }
+          }
+
+          // Fire boss weapons!
+          const fireInterval = difficultyRef.current === 'easy' ? 1800 : difficultyRef.current === 'hard' ? 800 : difficultyRef.current === 'nightmare' ? 500 : 1200;
+          if (Date.now() - boss.lastFired > fireInterval) {
+            boss.lastFired = Date.now();
+            playLaserSound(2);
+
+            // Pattern depends on HP or state
+            if (boss.hp < boss.maxHp * 0.45) {
+              // Desperation phase: massive 12-bullet circular ring!
+              for (let i = 0; i < 12; i++) {
+                const ang = boss.angle + (i * Math.PI / 6);
+                pirateLasersRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: boss.x + Math.cos(ang) * 90,
+                  y: boss.y + Math.sin(ang) * 90,
+                  vx: Math.cos(ang) * 8.0,
+                  vy: Math.sin(ang) * 8.0,
+                  angle: ang,
+                  radius: 7,
+                  color: '#eab308', // heavy gold energy balls!
+                  lifetime: 0,
+                  maxLifetime: 120
+                });
+              }
+            } else {
+              // Standard phase: Heavy 5-bullet fan-shaped projectile spread! (Much stronger!)
+              const angles = [boss.angle - 0.4, boss.angle - 0.2, boss.angle, boss.angle + 0.2, boss.angle + 0.4];
+              angles.forEach(ang => {
+                pirateLasersRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: boss.x + Math.cos(ang) * 90,
+                  y: boss.y + Math.sin(ang) * 90,
+                  vx: Math.cos(ang) * 9.0,
+                  vy: Math.sin(ang) * 9.0,
+                  angle: ang,
+                  radius: 6,
+                  color: '#f43f5e',
+                  lifetime: 0,
+                  maxLifetime: 100
+                });
+              });
+            }
+          }
+        }
+      }
+
+      // Check if boss died
+      if (boss.hp <= 0) {
+        bossRef.current = null;
+        isBossFightActiveRef.current = false;
+        setIsBossFightActive(false);
+
+        // Win rewards! Large crystals, diamonds, obsidian!
+        setStats(curr => {
+          const nextStats = {
+            ...curr,
+            crystals: curr.crystals + 50,
+            diamonds: curr.diamonds + 15,
+            obsidian: curr.obsidian + 5,
+          };
+          saveStats(nextStats);
+          return nextStats;
+        });
+
+        // Trigger big explosion and victory modal!
+        triggerComboSteamCloud(boss.x, boss.y);
+        for (let i = 0; i < 60; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = Math.random() * 8 + 2;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            color: Math.random() < 0.5 ? '#facc15' : '#ef4444',
+            size: Math.random() * 8 + 3,
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 60 + Math.floor(Math.random() * 60)
+          });
+        }
+        playExplosionSound('colossal');
+        setShowBossVictoryModal(true);
+      }
+    }
+
     // Update Cosmic Pirates behaviour
     piratesRef.current.forEach(pirate => {
       let closestP: Player | null = null;
@@ -2109,6 +2427,15 @@ export default function App() {
       }
     }
 
+    if (sockCooldownRef.current > 0) {
+      sockCooldownRef.current--;
+      if (sockCooldownRef.current % 15 === 0) {
+        setSockCooldown(Math.ceil(sockCooldownRef.current / 60));
+      }
+    } else {
+      setSockCooldown(0);
+    }
+
     // --- 6. LASER FLIGHT & BOUNDS ---
     lasersRef.current = lasersRef.current.map(laser => {
       laser.x += laser.vx;
@@ -2201,36 +2528,37 @@ export default function App() {
         playCollectSound(ore.type);
         triggerOreSparkExplosion(ore.x, ore.y, ore.color);
 
-        let awardLabel = `${pName}: +1 Krystal`;
+        let awardLabel = `${pName}: +3 Krystaly`;
         let scoreAdded = 0;
 
+        const multiplier = getScoreMultiplierFromRef();
         if (ore.type === 'crystal') {
-          setRunCrystals(c => c + 1);
-          scoreAdded = 50;
+          setRunCrystals(c => c + 3);
+          scoreAdded = Math.round(150 * multiplier);
           setStats(curr => {
-            const nextStats = { ...curr, crystals: curr.crystals + 1 };
+            const nextStats = { ...curr, crystals: curr.crystals + 3 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Krystal (+50 skóre)`;
+          awardLabel = `${pName}: +3 Krystaly (+${scoreAdded} skóre)`;
         } else if (ore.type === 'diamond') {
-          setRunDiamonds(d => d + 1);
-          scoreAdded = 1000;
+          setRunDiamonds(d => d + 2);
+          scoreAdded = Math.round(5000 * multiplier);
           setStats(curr => {
-            const nextStats = { ...curr, diamonds: curr.diamonds + 1 };
+            const nextStats = { ...curr, diamonds: curr.diamonds + 2 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Diamant (+1000 skóre!)`;
+          awardLabel = `${pName}: +2 Diamanty (+${scoreAdded} skóre!)`;
         } else if (ore.type === 'obsidian') {
-          setRunObsidian(o => o + 1);
-          scoreAdded = 3000;
+          setRunObsidian(o => o + 2);
+          scoreAdded = Math.round(16000 * multiplier);
           setStats(curr => {
-            const nextStats = { ...curr, obsidian: curr.obsidian + 1 };
+            const nextStats = { ...curr, obsidian: curr.obsidian + 2 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Obsidián (+3000 skóre!)`;
+          awardLabel = `${pName}: +2 Obsidiány (+${scoreAdded} skóre!)`;
         }
 
         if (scoreAdded > 0) {
@@ -2315,13 +2643,18 @@ export default function App() {
         const ady = asteroid.y - pY;
         const distanceToPlayer = Math.sqrt(adx * adx + ady * ady);
 
-        if (distanceToPlayer > 1300) {
+        // Dynamically calculate screen boundary to prevent asteroids from wrapping while visible
+        const screenDiag = Math.max(1600, Math.hypot(width, height));
+        const wrapDistanceThreshold = screenDiag / 2 + asteroid.radius + 350;
+
+        if (distanceToPlayer > wrapDistanceThreshold) {
           const angleOffset = anchorPlayer.vx || anchorPlayer.vy 
             ? Math.atan2(anchorPlayer.vy, anchorPlayer.vx) + (Math.random() * 1.5 - 0.75)
             : Math.random() * Math.PI * 2;
           
-          asteroid.x = pX + Math.cos(angleOffset) * 1100;
-          asteroid.y = pY + Math.sin(angleOffset) * 1100;
+          const spawnDistance = wrapDistanceThreshold - 150;
+          asteroid.x = pX + Math.cos(angleOffset) * spawnDistance;
+          asteroid.y = pY + Math.sin(angleOffset) * spawnDistance;
           
           const pathAngle = angleOffset + Math.PI + (Math.random() * 1.0 - 0.5);
           const spd = Math.random() * 1.3 + 0.4;
@@ -2404,6 +2737,393 @@ export default function App() {
 
     lasersRef.current = lasersRef.current.filter(l => l.lifetime < l.maxLifetime);
 
+    // --- STINKY SOCK UPDATE, COLLISION & CLOUD DOT ---
+    socksRef.current = socksRef.current.map(sock => {
+      if (!sock.cloudActive) {
+        // Flying sock projectile
+        sock.x += sock.vx;
+        sock.y += sock.vy;
+        sock.lifetime++;
+
+        // Spawn trailing stinky gas particles
+        if (Math.random() < 0.35) {
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: sock.x,
+            y: sock.y,
+            vx: (Math.random() - 0.5) * 2.0,
+            vy: (Math.random() - 0.5) * 2.0,
+            color: Math.random() < 0.5 ? '#84cc16' : '#a3e635',
+            size: Math.random() * 5 + 2,
+            alpha: 0.8,
+            lifetime: 0,
+            maxLifetime: 40,
+          });
+        }
+
+        // Check if sock hit anything
+        let triggerBurst = false;
+
+        // Check asteroid collision
+        asteroidsRef.current.forEach(ast => {
+          if (triggerBurst) return;
+          const dx = sock.x - ast.x;
+          const dy = sock.y - ast.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.radius + ast.radius) {
+            ast.hp -= sock.damage;
+            if (ast.hp <= 0) {
+              handleAsteroidBlowUp(ast);
+            }
+            triggerBurst = true;
+          }
+        });
+
+        // Check pirate collision
+        piratesRef.current.forEach(pirate => {
+          if (triggerBurst) return;
+          const dx = sock.x - pirate.x;
+          const dy = sock.y - pirate.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.radius + pirate.radius) {
+            pirate.hp -= sock.damage;
+            triggerBurst = true;
+          }
+        });
+
+        // Check Boss collision
+        if (bossRef.current && !triggerBurst) {
+          const boss = bossRef.current;
+          const dx = sock.x - boss.x;
+          const dy = sock.y - boss.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.radius + boss.radius) {
+            boss.hp -= sock.damage;
+            triggerBurst = true;
+          }
+        }
+
+        if (sock.lifetime >= sock.maxLifetime) {
+          triggerBurst = true;
+        }
+
+        if (triggerBurst) {
+          sock.cloudActive = true;
+          sock.lifetime = 0; // reset to track cloud lifetime
+          
+          // Level 3 Sock splits into 3 sub-socks flying outwards!
+          if (sock.level === 3) {
+            const splitSpeed = 6.5;
+            for (let i = 0; i < 3; i++) {
+              const theta = sock.angle + (i * Math.PI * 2 / 3);
+              socksRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: sock.x,
+                y: sock.y,
+                vx: Math.cos(theta) * splitSpeed,
+                vy: Math.sin(theta) * splitSpeed,
+                angle: theta,
+                radius: 12,
+                damage: 10,
+                lifetime: 0,
+                maxLifetime: 60, // shorter flight
+                cloudActive: false,
+                cloudRadius: 50,
+                cloudDuration: 3 * 60,
+                cloudDmgPerFrame: 0.5,
+                level: 1, // won't split again
+              });
+            }
+          }
+        }
+      } else {
+        // Gaseous cloud state
+        sock.lifetime++;
+
+        // Spawn cloud bubble particles
+        if (Math.random() < 0.45) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = Math.random() * sock.cloudRadius;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: sock.x + Math.cos(angle) * radius,
+            y: sock.y + Math.sin(angle) * radius,
+            vx: (Math.random() - 0.5) * 0.9,
+            vy: (Math.random() - 0.5) * 0.9,
+            color: Math.random() < 0.7 ? '#84cc16' : '#eab308', // green/yellow
+            size: Math.random() * 10 + 4,
+            alpha: 0.6,
+            lifetime: 0,
+            maxLifetime: 60,
+          });
+        }
+
+        // Apply Damage-over-time (DOT) & slowing effect
+        asteroidsRef.current.forEach(ast => {
+          const dx = ast.x - sock.x;
+          const dy = ast.y - sock.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.cloudRadius) {
+            ast.hp -= sock.cloudDmgPerFrame;
+            ast.vx *= 0.93; // Thick slowing gas
+            ast.vy *= 0.93;
+            if (ast.hp <= 0) {
+              setTimeout(() => {
+                const alive = asteroidsRef.current.some(a => a.id === ast.id);
+                if (alive) handleAsteroidBlowUp(ast);
+              }, 40);
+            }
+          }
+        });
+
+        piratesRef.current.forEach(pirate => {
+          const dx = pirate.x - sock.x;
+          const dy = pirate.y - sock.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.cloudRadius) {
+            pirate.hp -= sock.cloudDmgPerFrame;
+            pirate.vx *= 0.91; // Slow down pirate
+            pirate.vy *= 0.91;
+          }
+        });
+
+        if (bossRef.current) {
+          const boss = bossRef.current;
+          const dx = boss.x - sock.x;
+          const dy = boss.y - sock.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < sock.cloudRadius) {
+            boss.hp -= sock.cloudDmgPerFrame;
+            boss.vx *= 0.96;
+            boss.vy *= 0.96;
+          }
+        }
+      }
+      return sock;
+    }).filter(sock => !(sock.cloudActive && sock.lifetime >= sock.cloudDuration));
+
+    // --- UPDATE AUTOMATIC MINING DRONES ---
+    const dronesNeeded = upgradesRef.current.miningDronesLevel || 0;
+    if (dronesRef.current.length < dronesNeeded) {
+      const livingPlayer = playersRef.current.find(p => p.hull > 0);
+      const px = livingPlayer ? livingPlayer.x : 0;
+      const py = livingPlayer ? livingPlayer.y : 0;
+      while (dronesRef.current.length < dronesNeeded) {
+        dronesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: px + (Math.random() - 0.5) * 120,
+          y: py + (Math.random() - 0.5) * 120,
+          vx: 0,
+          vy: 0,
+          angle: Math.random() * Math.PI * 2,
+          targetX: px,
+          targetY: py,
+          laserBeamActive: false,
+          laserTargetX: 0,
+          laserTargetY: 0,
+          laserTargetAsteroidId: undefined,
+          miningTimer: 0,
+          idlingOffsetAngle: dronesRef.current.length * (Math.PI * 2 / 3) + Math.random() * 0.5,
+        });
+      }
+    } else if (dronesRef.current.length > dronesNeeded) {
+      dronesRef.current = dronesRef.current.slice(0, dronesNeeded);
+    }
+
+    const currentLivingPlayerForDrones = playersRef.current.find(p => p.hull > 0);
+    if (currentLivingPlayerForDrones && dronesNeeded > 0) {
+      const px = currentLivingPlayerForDrones.x;
+      const py = currentLivingPlayerForDrones.y;
+
+      dronesRef.current.forEach(drone => {
+        // Find nearest floating ore
+        let nearestOre: Ore | null = null;
+        let minOreDist = 999999;
+        const searchRadius = dronesNeeded === 3 ? 650 : dronesNeeded === 2 ? 450 : 350;
+
+        oresRef.current.forEach(ore => {
+          const d = Math.hypot(ore.x - drone.x, ore.y - drone.y);
+          if (d < minOreDist && d < searchRadius) {
+            minOreDist = d;
+            nearestOre = ore;
+          }
+        });
+
+        if (nearestOre) {
+          // 1. Move to and collect floating ore
+          const targetOre = nearestOre as Ore;
+          const dx = targetOre.x - drone.x;
+          const dy = targetOre.y - drone.y;
+          const dist = Math.hypot(dx, dy);
+          
+          const droneMaxSpeed = dronesNeeded === 3 ? 9.0 : 6.0;
+          const force = 0.5;
+          
+          drone.vx += (dx / Math.max(1, dist)) * force;
+          drone.vy += (dy / Math.max(1, dist)) * force;
+          
+          const speed = Math.hypot(drone.vx, drone.vy);
+          if (speed > droneMaxSpeed) {
+            drone.vx = (drone.vx / speed) * droneMaxSpeed;
+            drone.vy = (drone.vy / speed) * droneMaxSpeed;
+          }
+
+          drone.x += drone.vx;
+          drone.y += drone.vy;
+          drone.angle = Math.atan2(drone.vy, drone.vx);
+          drone.laserBeamActive = false;
+
+          // Collect ore if close enough
+          if (dist < 30) {
+            playCollectSound(targetOre.type);
+            triggerOreSparkExplosion(targetOre.x, targetOre.y, targetOre.color);
+            
+            let awardLabel = `🤖 Dron: +3 Krystaly`;
+            let scoreAdded = 0;
+
+            const multiplier = getScoreMultiplierFromRef();
+            if (targetOre.type === 'crystal') {
+              setRunCrystals(c => c + 3);
+              scoreAdded = Math.round(150 * multiplier);
+              setStats(curr => {
+                const nextStats = { ...curr, crystals: curr.crystals + 3 };
+                saveStats(nextStats);
+                return nextStats;
+              });
+              awardLabel = `🤖 Dron: +3 Krystaly (+${scoreAdded} skóre)`;
+            } else if (targetOre.type === 'diamond') {
+              setRunDiamonds(d => d + 2);
+              scoreAdded = Math.round(5000 * multiplier);
+              setStats(curr => {
+                const nextStats = { ...curr, diamonds: curr.diamonds + 2 };
+                saveStats(nextStats);
+                return nextStats;
+              });
+              awardLabel = `🤖 Dron: +2 Diamanty (+${scoreAdded} skóre!)`;
+            } else if (targetOre.type === 'obsidian') {
+              setRunObsidian(o => o + 2);
+              scoreAdded = Math.round(16000 * multiplier);
+              setStats(curr => {
+                const nextStats = { ...curr, obsidian: curr.obsidian + 2 };
+                saveStats(nextStats);
+                return nextStats;
+              });
+              awardLabel = `🤖 Dron: +2 Obsidiány (+${scoreAdded} skóre!)`;
+            }
+
+            if (scoreAdded > 0) {
+              const newScore = scoreRef.current + scoreAdded;
+              scoreRef.current = newScore;
+              setCurrentScore(newScore);
+            }
+
+            addGainNotification(awardLabel, targetOre.color);
+            oresRef.current = oresRef.current.filter(o => o.id !== targetOre.id);
+          }
+        } else {
+          // 2. No ore nearby. Try mining nearest asteroid (Level 2+)
+          let nearestAsteroid: Asteroid | null = null;
+          let minAstDist = 999999;
+          const mineRadius = dronesNeeded === 3 ? 350 : 250;
+
+          if (dronesNeeded >= 2) {
+            asteroidsRef.current.forEach(ast => {
+              const d = Math.hypot(ast.x - drone.x, ast.y - drone.y);
+              if (d < minAstDist && d < mineRadius) {
+                minAstDist = d;
+                nearestAsteroid = ast;
+              }
+            });
+          }
+
+          if (nearestAsteroid) {
+            const targetAst = nearestAsteroid as Asteroid;
+            const dx = targetAst.x - drone.x;
+            const dy = targetAst.y - drone.y;
+            const dist = Math.hypot(dx, dy);
+
+            // Maintain distance around 110px from asteroid
+            const idealDist = 110;
+            const diff = dist - idealDist;
+            const steerX = (dx / dist) * diff;
+            const steerY = (dy / dist) * diff;
+
+            drone.vx += steerX * 0.04;
+            drone.vy += steerY * 0.04;
+            drone.vx *= 0.92;
+            drone.vy *= 0.92;
+
+            drone.x += drone.vx;
+            drone.y += drone.vy;
+
+            drone.angle = Math.atan2(dy, dx);
+            drone.laserBeamActive = true;
+            drone.laserTargetX = targetAst.x;
+            drone.laserTargetY = targetAst.y;
+            drone.laserTargetAsteroidId = targetAst.id;
+
+            drone.miningTimer++;
+            const interval = dronesNeeded === 3 ? 40 : 60;
+            const chance = dronesNeeded === 3 ? 0.45 : 0.30;
+
+            if (drone.miningTimer >= interval) {
+              drone.miningTimer = 0;
+              if (Math.random() < chance) {
+                const newOre = createOreEntity(targetAst.x, targetAst.y, 'crystal', true);
+                oresRef.current.push(newOre);
+
+                targetAst.hp -= 1.5;
+                if (targetAst.hp <= 0) {
+                  handleAsteroidBlowUp(targetAst);
+                }
+
+                // Green mining spark effect
+                for (let i = 0; i < 4; i++) {
+                  particlesRef.current.push({
+                    id: Math.random().toString(36).substring(2, 9),
+                    x: targetAst.x,
+                    y: targetAst.y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    color: '#10b981',
+                    size: Math.random() * 4 + 2,
+                    alpha: 0.8,
+                    lifetime: 0,
+                    maxLifetime: 30,
+                  });
+                }
+              }
+            }
+          } else {
+            // 3. IDLE: Orbit the living player ship
+            drone.idlingOffsetAngle += 0.02;
+            const orbitRadius = 80 + (drone.idlingOffsetAngle % 3) * 12;
+            const targetX = px + Math.cos(drone.idlingOffsetAngle) * orbitRadius;
+            const targetY = py + Math.sin(drone.idlingOffsetAngle) * orbitRadius;
+
+            const dx = targetX - drone.x;
+            const dy = targetY - drone.y;
+            const dist = Math.hypot(dx, dy);
+
+            const force = 0.35;
+            drone.vx += (dx / Math.max(1, dist)) * force;
+            drone.vy += (dy / Math.max(1, dist)) * force;
+
+            drone.vx *= 0.88;
+            drone.vy *= 0.88;
+
+            drone.x += drone.vx;
+            drone.y += drone.vy;
+            drone.angle = Math.atan2(drone.vy, drone.vx);
+            drone.laserBeamActive = false;
+          }
+        }
+      });
+    } else {
+      // Clear if no living player or no level
+      dronesRef.current = [];
+    }
+
     // --- SHIP CRASH CHECK FOR ALL ACTIVE PLAYERS ---
     playersRef.current.forEach(p => {
       if (p.hull > 0 && p.invulnerableTime <= 0) {
@@ -2476,6 +3196,137 @@ export default function App() {
       particle.alpha = 1.0 - (particle.lifetime / particle.maxLifetime);
       return particle;
     }).filter(particle => particle.lifetime < particle.maxLifetime);
+
+    // --- PLAYER LASERS VS BOSS COLLISION ---
+    if (isBossFightActiveRef.current && bossRef.current) {
+      const boss = bossRef.current;
+      lasersRef.current.forEach(laser => {
+        if (laser.lifetime >= laser.maxLifetime) return;
+
+        const ldx = laser.x - boss.x;
+        const ldy = laser.y - boss.y;
+        const distSq = ldx * ldx + ldy * ldy;
+        const hitRad = laser.radius + boss.radius;
+
+        if (distSq < hitRad * hitRad) {
+          boss.hp -= laser.damage;
+          
+          if (!laser.isPiercing) {
+            laser.lifetime = laser.maxLifetime; // destroy standard laser on impact
+          }
+
+          // Spark particles
+          for (let i = 0; i < 4; i++) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: laser.x,
+              y: laser.y,
+              vx: (Math.random() - 0.5) * 5,
+              vy: (Math.random() - 0.5) * 5,
+              color: '#22d3ee', // glowing cyan sparks
+              size: Math.random() * 2.5 + 1.2,
+              alpha: 0.8,
+              lifetime: 0,
+              maxLifetime: 25,
+            });
+          }
+
+          playExplosionSound('small');
+        }
+      });
+    }
+
+    // --- COSMIC WORMHOLE UPDATE & PROGRESSION ---
+    if (!isBossFightActiveRef.current && scoreRef.current >= 8000) {
+      const livingPlayer = playersRef.current.find(p => p.hull > 0) || playersRef.current[0];
+      if (livingPlayer) {
+        if (!wormholeRef.current) {
+          wormholeRef.current = {
+            x: livingPlayer.x,
+            y: livingPlayer.y - 750, // Spawns 750px ahead
+            radius: 75,
+            angle: 0,
+            pulseScale: 1.0,
+            soundPlayed: false,
+          };
+          addGainNotification("🌀 ALARM: DETEKOVÁNA KOSMICKÁ ČERVÍ DÍRA!", "#a855f7");
+          addGainNotification("Vleťte do portálu pro hyper-skok k Generálovi!", "#c084fc");
+        } else {
+          const wormhole = wormholeRef.current;
+          wormhole.angle += 0.02; // Rotate
+          wormhole.pulseScale = 1.0 + Math.sin(Date.now() / 150) * 0.07;
+
+          // Check if any player enters the wormhole
+          playersRef.current.forEach(p => {
+            if (p.hull > 0) {
+              const dx = p.x - wormhole.x;
+              const dy = p.y - wormhole.y;
+              const dist = Math.hypot(dx, dy);
+
+              if (dist < 65) {
+                // Warp teleport!
+                playUpgradeSound();
+
+                // Clear wormhole and initiate Boss fight!
+                wormholeRef.current = null;
+                
+                isBossFightActiveRef.current = true;
+                setIsBossFightActive(true);
+                
+                // Open Upgrade Shop right when entering via portal so they can buy!
+                setIsShopOpen(true);
+                isShopOpenRef.current = true;
+
+                // Spawn protective asteroid coverage
+                populateAsteroidBelt(4);
+
+                let bossMaxHp = 6000; // Medium difficulty
+                if (difficultyRef.current === 'easy') bossMaxHp = 3000;
+                else if (difficultyRef.current === 'hard') bossMaxHp = 10000;
+                else if (difficultyRef.current === 'nightmare') bossMaxHp = 16000;
+
+                // Move boss in front of player
+                bossRef.current = {
+                  x: p.x,
+                  y: p.y - 400,
+                  vx: 0,
+                  vy: 0,
+                  angle: -Math.PI / 2,
+                  hp: bossMaxHp,
+                  maxHp: bossMaxHp,
+                  radius: 90,
+                  state: 'intro',
+                  lastFired: 0,
+                  lastShieldFired: 0,
+                  lastValuableMove: Date.now() + 4000, // Trigger first valuable move 4s after start
+                };
+
+                // Big teleportation spark cloud
+                for (let i = 0; i < 120; i++) {
+                  const ang = Math.random() * Math.PI * 2;
+                  const speed = Math.random() * 11 + 3;
+                  particlesRef.current.push({
+                    id: Math.random().toString(36).substring(2, 9),
+                    x: p.x,
+                    y: p.y,
+                    vx: Math.cos(ang) * speed,
+                    vy: Math.sin(ang) * speed,
+                    color: Math.random() < 0.5 ? '#c084fc' : '#22d3ee',
+                    size: Math.random() * 4 + 1.5,
+                    alpha: 1.0,
+                    lifetime: 0,
+                    maxLifetime: 70
+                  });
+                }
+
+                addGainNotification("🌀 HYPER-SKOK SKRZE ČERVÍ DÍRU SE USPĚŠNĚ ZDAŘIL!", "#a855f7");
+                addGainNotification("⚠️ VYSTUPUJETE V ARÉNĚ GENERÁLA KORZÁRŮ!", "#ef4444");
+              }
+            }
+          });
+        }
+      }
+    }
 
     populateAsteroidBelt(18);
 
@@ -2796,6 +3647,46 @@ export default function App() {
     addGainNotification("SUPER MAGNET: AKTIVOVÁN!", "#06b6d4");
   };
 
+  const triggerStinkySock = (playerNum: number) => {
+    const lvl = upgradesRef.current.abilitySockLevel || 0;
+    if (lvl <= 0) return;
+
+    if (sockCooldownRef.current > 0) return;
+
+    const p = playersRef.current.find(pl => pl.playerNum === playerNum);
+    if (!p) return;
+    if (p.invulnerableTime > 0 && p.hull <= 0) return;
+
+    const cooldownSeconds = lvl === 3 ? 8 : lvl === 2 ? 12 : 15;
+    sockCooldownRef.current = cooldownSeconds * 60;
+    setSockCooldown(cooldownSeconds);
+
+    const speed = 7;
+    const cos = Math.cos(p.angle);
+    const sin = Math.sin(p.angle);
+
+    socksRef.current.push({
+      id: Math.random().toString(36).substring(2, 9),
+      x: p.x + cos * 25,
+      y: p.y + sin * 25,
+      vx: cos * speed + p.vx * 0.3,
+      vy: sin * speed + p.vy * 0.3,
+      angle: p.angle,
+      radius: 12 + lvl * 4,
+      damage: lvl * 8,
+      lifetime: 0,
+      maxLifetime: 120,
+      cloudActive: false,
+      cloudRadius: 60 + lvl * 30,
+      cloudDuration: (lvl === 3 ? 8 : lvl === 2 ? 5 : 3) * 60,
+      cloudDmgPerFrame: lvl === 3 ? 2.5 : lvl === 2 ? 1.2 : 0.5,
+      level: lvl,
+    });
+
+    addGainNotification("🧦 SMRADLAVÁ PONOŽKA VYSTŘELENA!", "#84cc16");
+    playExplosionSound('small');
+  };
+
   const triggerSpawnPirateDrops = (px: number, py: number) => {
     const drops: Ore[] = [];
     drops.push(createOreEntity(px, py, 'obsidian'));
@@ -2827,7 +3718,8 @@ export default function App() {
       });
     }
 
-    const bonusPoints = 500;
+    const multiplier = getScoreMultiplierFromRef();
+    const bonusPoints = Math.round(500 * multiplier);
     const newScore = scoreRef.current + bonusPoints;
     scoreRef.current = newScore;
     setCurrentScore(newScore);
@@ -2842,7 +3734,7 @@ export default function App() {
     });
 
     triggerSpawnPirateDrops(pirate.x, pirate.y);
-    addGainNotification("☠️ CORSÁR ZNIČEN! (+500 skóre, drahokamy vypadly!)", "#f43f5e");
+    addGainNotification(`☠️ CORSÁR ZNIČEN! (+${bonusPoints} skóre, drahokamy vypadly!)`, "#f43f5e");
   };
 
   // --- ASTEROID DESTRUCTION & SUB-SPLIT MECHANIC ---
@@ -2851,7 +3743,8 @@ export default function App() {
     triggerAsteroidPieceExplosionParticles(asteroid);
 
     // 1. Add score
-    const awardedPoints = asteroid.points;
+    const multiplier = getScoreMultiplierFromRef();
+    const awardedPoints = Math.round(asteroid.points * multiplier);
     const newScore = scoreRef.current + awardedPoints;
     scoreRef.current = newScore;
     setCurrentScore(newScore);
@@ -2926,8 +3819,26 @@ export default function App() {
 
   const triggerShipCatastrophicFailure = () => {
     setIsPlaying(false);
-    setIsGameOver(true);
-    playExplosionSound('huge');
+    
+    if (isBossFightActiveRef.current) {
+      // Teleported back! Must start over! Loss of Activator.
+      const updatedUpgrades = {
+        ...upgrades,
+        blackHoleActivator: 0
+      };
+      setUpgrades(updatedUpgrades);
+      saveUpgrades(updatedUpgrades);
+      
+      bossRef.current = null;
+      isBossFightActiveRef.current = false;
+      setIsBossFightActive(false);
+      
+      setShowBossDefeatModal(true);
+      playExplosionSound('huge');
+    } else {
+      setIsGameOver(true);
+      playExplosionSound('huge');
+    }
 
     // Explode all active players
     playersRef.current.forEach(p => {
@@ -3308,6 +4219,375 @@ export default function App() {
 
         ctx.restore();
       });
+
+      // --- DRAW STINKY SOCKS & GASEOUS CLOUDS ---
+      socksRef.current.forEach(sock => {
+        const sx = sock.x - camX;
+        const sy = sock.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        if (!sock.cloudActive) {
+          ctx.rotate(sock.angle);
+          ctx.fillStyle = '#a3e635'; // Smelly green
+          ctx.strokeStyle = '#4d7c0f';
+          ctx.lineWidth = 1.8;
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = '#84cc16';
+          
+          ctx.beginPath();
+          // Sock ankle cuff
+          ctx.rect(-7, -11, 14, 14);
+          // Sock foot heel to toe
+          ctx.rect(-7, 3, 22, 9);
+          ctx.fill();
+          ctx.stroke();
+
+          // Stitch lines details
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(-3, -7);
+          ctx.lineTo(3, -7);
+          ctx.moveTo(-3, -3);
+          ctx.lineTo(3, -3);
+          ctx.stroke();
+
+          // Funny yellow stink lines waving
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(-10, -15);
+          ctx.quadraticCurveTo(-14, -20, -10, -25);
+          ctx.moveTo(10, -15);
+          ctx.quadraticCurveTo(14, -20, 10, -25);
+          ctx.stroke();
+        } else {
+          // Dynamic pulsing expand effect
+          const scalePulse = 1.0 + Math.sin(Date.now() / 200 + sock.x) * 0.05;
+          const r = sock.cloudRadius * scalePulse;
+
+          const gradient = ctx.createRadialGradient(0, 0, 5, 0, 0, r);
+          gradient.addColorStop(0, 'rgba(132, 204, 22, 0.45)');
+          gradient.addColorStop(0.4, 'rgba(163, 230, 53, 0.22)');
+          gradient.addColorStop(0.8, 'rgba(234, 179, 8, 0.08)');
+          gradient.addColorStop(1, 'rgba(234, 179, 8, 0)');
+          
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      });
+
+      // --- DRAW AUTOMATIC MINING DRONES ---
+      dronesRef.current.forEach(drone => {
+        const dx = drone.x - camX;
+        const dy = drone.y - camY;
+
+        // 1. Draw mining laser beam first (underneath the drone body)
+        if (drone.laserBeamActive) {
+          const tx = drone.laserTargetX - camX;
+          const ty = drone.laserTargetY - camY;
+
+          ctx.save();
+          // Outer glowing beam
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2.5 + Math.sin(Date.now() / 50) * 1.0;
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#10b981';
+          ctx.beginPath();
+          ctx.moveTo(dx, dy);
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+
+          // Inner white core
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(dx, dy);
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+          ctx.restore();
+
+          // Spawn little mining laser sparks at target
+          if (Math.random() < 0.3) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: drone.laserTargetX + (Math.random() - 0.5) * 10,
+              y: drone.laserTargetY + (Math.random() - 0.5) * 10,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2,
+              color: '#34d399',
+              size: Math.random() * 3 + 1,
+              alpha: 0.7,
+              lifetime: 0,
+              maxLifetime: 20
+            });
+          }
+        }
+
+        // 2. Draw Drone body
+        ctx.save();
+        ctx.translate(dx, dy);
+        ctx.rotate(drone.angle);
+
+        // Shadow/glow
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#84cc16'; // Lime green glow
+
+        // Thruster flame at the back
+        const flameLen = 8 + Math.random() * 6;
+        const flameGrad = ctx.createLinearGradient(-10, 0, -10 - flameLen, 0);
+        flameGrad.addColorStop(0, '#a3e635');
+        flameGrad.addColorStop(1, 'rgba(163, 230, 53, 0)');
+        ctx.fillStyle = flameGrad;
+        ctx.beginPath();
+        ctx.moveTo(-8, -3);
+        ctx.lineTo(-8 - flameLen, 0);
+        ctx.lineTo(-8, 3);
+        ctx.closePath();
+        ctx.fill();
+
+        // Steel chassis circular orb body
+        ctx.fillStyle = '#334155'; // Dark slate metal
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Glowing visor dome (sensor)
+        ctx.fillStyle = '#84cc16'; // Glowing lime green eye
+        ctx.beginPath();
+        ctx.arc(4, 0, 3.5, -Math.PI / 2, Math.PI / 2);
+        ctx.fill();
+
+        // Cute side winglets
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#84cc16';
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        // Upper wing
+        ctx.moveTo(-2, -8);
+        ctx.lineTo(-6, -12);
+        ctx.lineTo(-1, -12);
+        ctx.closePath();
+        // Lower wing
+        ctx.moveTo(-2, 8);
+        ctx.lineTo(-6, 12);
+        ctx.lineTo(-1, 12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Little antenna blinking red light
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-3, -5);
+        ctx.lineTo(-6, -9);
+        ctx.stroke();
+
+        ctx.fillStyle = (Date.now() % 500 < 250) ? '#f43f5e' : '#1e293b';
+        ctx.beginPath();
+        ctx.arc(-6, -9, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+
+      // --- DRAW COSMIC WORMHOLE ---
+      if (!isBossFightActiveRef.current && wormholeRef.current) {
+        const wormhole = wormholeRef.current;
+        const wx = wormhole.x - camX;
+        const wy = wormhole.y - camY;
+
+        ctx.save();
+        ctx.translate(wx, wy);
+        ctx.rotate(wormhole.angle);
+
+        const r = wormhole.radius * wormhole.pulseScale;
+
+        // Draw background gravitational distortion rings
+        for (let i = 4; i > 0; i--) {
+          const alpha = 0.08 * i;
+          ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * (1 + i * 0.25), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Draw glowing neon outer purple vortex
+        const grad = ctx.createRadialGradient(0, 0, r * 0.1, 0, 0, r);
+        grad.addColorStop(0, '#020617'); // dark black center
+        grad.addColorStop(0.35, '#581c87'); // deep purple swirl
+        grad.addColorStop(0.7, '#a855f7'); // neon purple edge
+        grad.addColorStop(0.9, '#22d3ee'); // cyan rim sparks
+        grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw swirling spiral lines inside the vortex for dramatic detail!
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.45)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        for (let j = 0; j < 3; j++) {
+          const startAngle = (j * Math.PI * 2) / 3;
+          ctx.moveTo(0, 0);
+          for (let step = 0; step < 35; step++) {
+            const stepAng = startAngle + step * 0.12;
+            const stepRad = (step / 35) * r;
+            ctx.lineTo(Math.cos(stepAng) * stepRad, Math.sin(stepAng) * stepRad);
+          }
+        }
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Draw beautiful arrow indicator if the wormhole is offscreen!
+        const pvx = focusPlayer.x - camX;
+        const pvy = focusPlayer.y - camY;
+
+        // If wormhole center is offscreen
+        if (wx < 0 || wx > vw || wy < 0 || wy > vh) {
+          const dx = wx - pvx;
+          const dy = wy - pvy;
+          const angleToWormhole = Math.atan2(dy, dx);
+
+          // Position arrow on viewport edge with some padding
+          const arrowDist = Math.min(vw, vh) * 0.4;
+          const ax = pvx + Math.cos(angleToWormhole) * arrowDist;
+          const ay = pvy + Math.sin(angleToWormhole) * arrowDist;
+
+          ctx.save();
+          ctx.translate(ax, ay);
+          ctx.rotate(angleToWormhole);
+
+          // Pulsating indicator
+          const scale = 1.0 + Math.sin(Date.now() / 150) * 0.15;
+
+          // Glowing neon arrow
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#c084fc';
+          ctx.fillStyle = '#a855f7';
+          ctx.strokeStyle = '#22d3ee';
+          ctx.lineWidth = 1.5;
+
+          ctx.beginPath();
+          ctx.moveTo(15 * scale, 0);
+          ctx.lineTo(-8 * scale, -10 * scale);
+          ctx.lineTo(-4 * scale, 0);
+          ctx.lineTo(-8 * scale, 10 * scale);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Text label
+          ctx.rotate(-angleToWormhole); // keep text upright
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 11px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.shadowBlur = 4;
+          ctx.shadowColor = '#000000';
+          const distanceMeters = Math.round(Math.hypot(dx, dy) / 10);
+          ctx.fillText(`PORTÁL (${distanceMeters}m)`, 0, -18 * scale);
+
+          ctx.restore();
+        }
+      }
+
+      // --- DRAW GENERAL CORSAIR BOSS SHIP ---
+      if (isBossFightActiveRef.current && bossRef.current) {
+        const boss = bossRef.current;
+        const bx = boss.x - camX;
+        const by = boss.y - camY;
+
+        ctx.save();
+        ctx.translate(bx, by);
+
+        // Core ship rotation facing angle (offset since ship points upward in default SVG/Canvas geometry)
+        ctx.rotate(boss.angle + Math.PI / 2);
+
+        // Boss ship shadow glow
+        ctx.shadowBlur = 24;
+        ctx.shadowColor = '#ef4444';
+
+        // Outer Dark steel dreadnought hull
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 3.5;
+
+        ctx.beginPath();
+        ctx.moveTo(0, -90); // Nose
+        ctx.lineTo(65, 50); // Right wing tip
+        ctx.lineTo(25, 40); // Inner center right
+        ctx.lineTo(-25, 40); // Inner center left
+        ctx.lineTo(-65, 50); // Left wing tip
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Metallic panels styling
+        ctx.fillStyle = '#334155';
+        ctx.beginPath();
+        ctx.moveTo(0, -60);
+        ctx.lineTo(20, 10);
+        ctx.lineTo(-20, 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Glowing Core Crystal center window
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, -10, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Engine afterburners flames pulsing
+        const flameLength = 20 + Math.random() * 18;
+        const fGrad = ctx.createLinearGradient(0, 45, 0, 45 + flameLength);
+        fGrad.addColorStop(0, '#f97316');
+        fGrad.addColorStop(0.5, '#ef4444');
+        fGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+        ctx.fillStyle = fGrad;
+        ctx.fillRect(-45, 45, 12, flameLength);
+        ctx.fillRect(33, 45, 12, flameLength);
+
+        // Revert rotate to draw upright HP bar and title
+        ctx.rotate(-(boss.angle + Math.PI / 2));
+
+        // Draw Boss HP HUD directly on canvas
+        const barWidth = 160;
+        const barHeight = 8;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.fillRect(-barWidth / 2, -125, barWidth, barHeight);
+        
+        const hpRatio = Math.max(0, boss.hp / boss.maxHp);
+        const hpColor = hpRatio > 0.45 ? '#22c55e' : hpRatio > 0.2 ? '#eab308' : '#ef4444';
+        ctx.fillStyle = hpColor;
+        ctx.fillRect(-barWidth / 2, -125, barWidth * hpRatio, barHeight);
+        
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.0;
+        ctx.strokeRect(-barWidth / 2, -125, barWidth, barHeight);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px "Space Grotesk", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = '#000000';
+        ctx.fillText(`👑 GENERAL CORSAIR (${Math.round(hpRatio * 100)}%)`, 0, -135);
+
+        ctx.restore();
+      }
 
       pirateLasersRef.current.forEach(pl => {
         const sx = pl.x - camX;
@@ -3886,6 +5166,24 @@ export default function App() {
                   </div>
                 ) : null}
               </div>
+
+              {/* Ability 4: Smradlavá ponožka (Y/Z) */}
+              <div className={`relative flex items-center gap-2 px-3 py-2 border rounded-xl font-mono text-xs transition-all ${
+                upgrades.abilitySockLevel > 0 
+                  ? 'bg-slate-950/90 border-lime-500/25 text-lime-300' 
+                  : 'bg-slate-950/40 border-slate-900/40 text-slate-600 opacity-40'
+              }`}>
+                <div className="flex items-center justify-center w-5 h-5 rounded bg-lime-500/15 text-lime-400 font-extrabold text-[10px]">Y</div>
+                <div className="flex flex-col">
+                  <span className="font-sans font-bold text-[11px] text-slate-200 leading-none">Smradlavá ponožka</span>
+                  <span className="text-[9px] text-slate-500 mt-0.5">Lvl {upgrades.abilitySockLevel || 'Locked'}</span>
+                </div>
+                {sockCooldown > 0 && (
+                  <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center font-bold text-red-500 border border-red-500/30">
+                    {sockCooldown}s
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* COSMIC WEATHER STATION (ENVIRONMENT HAZARDS) */}
@@ -4330,13 +5628,24 @@ export default function App() {
             {/* Launch Actions */}
             <div className="space-y-3 flex flex-col items-center">
               <button
-                onClick={handleStartGame}
+                onClick={() => handleStartGame()}
                 className="w-full sm:w-auto px-10 py-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-xl shadow-orange-500/10 cursor-pointer hover:scale-105 active:scale-95 transition-all text-center"
                 id="portal-launch-run-btn"
               >
                 <Play className="w-4 h-4 fill-current" />
                 Spustit Motory a Vzlétnout
               </button>
+
+              {upgrades.blackHoleActivator === 1 && (
+                <button
+                  onClick={() => handleStartGame(true)}
+                  className="w-full sm:w-auto px-10 py-4 rounded-xl bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 text-white font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-xl shadow-red-500/30 cursor-pointer hover:scale-105 active:scale-95 transition-all text-center animate-pulse border border-red-400"
+                  id="portal-boss-launch-btn"
+                >
+                  <Skull className="w-4 h-4" />
+                  Aktivovat Černou Díru & Bojovat s Bossem
+                </button>
+              )}
 
               {/* Reset Game Save and sound options */}
               <div className="flex gap-4 text-xs font-mono text-slate-500 hover:text-slate-400">
@@ -4455,6 +5764,101 @@ export default function App() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* --- BOSS DEFEAT TELEPORTATION MODAL --- */}
+      {showBossDefeatModal && (
+        <div className="absolute inset-0 z-35 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-950 border border-red-500 rounded-2xl shadow-[0_0_50px_rgba(239,68,68,0.25)] p-6 text-center space-y-6 text-slate-100">
+            <div className="space-y-1">
+              <div className="w-20 h-20 bg-red-950/40 border border-red-500 rounded-full flex items-center justify-center mx-auto text-red-500 animate-pulse">
+                <Skull className="w-10 h-10 animate-bounce" />
+              </div>
+              <h2 className="text-2xl font-black text-red-500 tracking-tight uppercase pt-2">
+                PORÁŽKA V DIMENZI BOSSE!
+              </h2>
+              <p className="text-xs text-red-400 font-mono">Teleportace selhala - Nouzový návrat úspěšný</p>
+            </div>
+
+            <div className="bg-slate-900 p-5 border border-slate-800 rounded-xl space-y-4 text-left text-sm">
+              <p className="text-slate-300 leading-relaxed font-sans text-xs">
+                Byli jste poraženi <b>Generálem Korzárů</b>. Síla černé díry vás sice teleportovala zpět do bezpečí naší dimenze, ale váš <b className="text-purple-400">fázový aktivátor černé díry (Black Hole Activator)</b> byl při tomto procesu přetížen a zcela <b>ZNIČEN!</b>
+              </p>
+              <div className="p-3 bg-red-950/20 border border-red-900/50 rounded-lg text-xs text-red-300 font-medium">
+                ⚠️ Musíte získat nový aktivátor v Obchodě za Diamanty a Obsidián, abyste se mohli pokusit o odvetu!
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowBossDefeatModal(false);
+                setShowIntro(true);
+              }}
+              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-black uppercase text-xs tracking-wider transition-all cursor-pointer shadow-lg hover:scale-[1.01]"
+              id="boss-defeat-ok-btn"
+            >
+              Návrat do bezpečné zóny
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- BOSS VICTORY MODAL --- */}
+      {showBossVictoryModal && (
+        <div className="absolute inset-0 z-35 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-950 border border-emerald-500 rounded-2xl shadow-[0_0_50px_rgba(16,185,129,0.25)] p-6 text-center space-y-6 text-slate-100">
+            <div className="space-y-1">
+              <div className="w-20 h-20 bg-emerald-950/40 border border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-400">
+                <Award className="w-10 h-10 animate-spin-slow" />
+              </div>
+              <h2 className="text-2xl font-black text-emerald-400 tracking-tight uppercase pt-2">
+                VÍTĚZSTVÍ JE VAŠE!
+              </h2>
+              <p className="text-xs text-emerald-300 font-mono">Dreadnought Generála Korzárů byl rozmetán</p>
+            </div>
+
+            <div className="bg-slate-900 p-5 border border-slate-800 rounded-xl space-y-4 text-left text-sm">
+              <p className="text-slate-300 leading-relaxed font-sans text-xs">
+                Neuvěřitelný pilotní výkon! Úspěšně jste porazili <b>Generála Korzárů</b> v jeho domovském světě. Hrozba byla zažehnána a galaxie oslavuje své zachránce!
+              </p>
+              
+              <div className="w-full h-[1px] bg-slate-800" />
+              
+              <h4 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Získané Epické Válečné Odměny:</h4>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs mt-1">
+                <div className="bg-emerald-950/30 border border-emerald-500/20 p-2 rounded-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-1 animate-pulse" />
+                  <span className="text-slate-400 font-mono flex flex-col mt-1">
+                    <b className="text-emerald-400 font-black text-sm pr-1">+50</b> Krystalů
+                  </span>
+                </div>
+                <div className="bg-blue-950/30 border border-blue-500/20 p-2 rounded-lg">
+                  <Gem className="w-3.5 h-3.5 text-blue-400 mx-auto" />
+                  <span className="text-slate-400 font-mono flex flex-col mt-0.5">
+                    <b className="text-blue-400 font-black text-sm pr-1">+15</b> Diamantů
+                  </span>
+                </div>
+                <div className="bg-purple-950/30 border border-purple-500/20 p-2 rounded-lg">
+                  <span className="w-2.5 h-2.5 bg-purple-600 rotate-45 border border-purple-300 inline-block mr-1" />
+                  <span className="text-slate-400 font-mono flex flex-col mt-1">
+                    <b className="text-purple-400 font-black text-sm pr-1">+5</b> Obsidiánu
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowBossVictoryModal(false);
+                setShowIntro(true);
+              }}
+              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black uppercase text-xs tracking-wider transition-all cursor-pointer shadow-lg hover:scale-[1.01]"
+              id="boss-victory-ok-btn"
+            >
+              Slavit Vítězství!
+            </button>
           </div>
         </div>
       )}

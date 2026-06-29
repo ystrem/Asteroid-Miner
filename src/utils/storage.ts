@@ -17,6 +17,10 @@ const DEFAULT_UPGRADES: Upgrades = {
   abilityLightningLevel: 0,
   abilityPulseLevel: 0,
   abilitySuperMagnetLevel: 0,
+  scoreMultiplierLevel: 1,
+  abilitySockLevel: 0,
+  blackHoleActivator: 0,
+  miningDronesLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {

@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { Upgrades, PlayerStats } from '../types';
 import { playUpgradeSound } from '../utils/audio';
-import { Sparkles, Shield, Zap, Hammer, X, Gem, Star, Swords, Waves } from 'lucide-react';
+import { Sparkles, Shield, Zap, Hammer, X, Gem, Star, Swords, Waves, Cpu } from 'lucide-react';
 
 interface UpgradeShopProps {
   upgrades: Upgrades;
@@ -63,7 +63,7 @@ export default function UpgradeShop({
         {
           level: 2,
           title: 'Široký paprsek',
-          description: 'Hustší plazma s dvojnásobným poškozením a širším zásahem.',
+          description: 'Hustší plazma s dvojnásobným poškozením and širším zásahem.',
           costs: { crystals: 0, diamonds: 5, obsidian: 0 },
         },
         {
@@ -75,14 +75,26 @@ export default function UpgradeShop({
         {
           level: 4,
           title: 'Prorážející paprsek',
-          description: 'Ultimátní energetický laser prorazí menší úlomky a letí dál.',
+          description: 'Ultimátní energetický laser prorazí menší úlomky and letí dál.',
           costs: { crystals: 0, diamonds: 40, obsidian: 10 },
         },
         {
           level: 5,
           title: 'Kvantová kaskáda',
-          description: 'Hlava s 5 hlavněmi! Prorážející hlavní paprsek a 4 boční krycí střely vyčistí obrazovku.',
+          description: 'Hlava s 5 hlavněmi! Prorážející hlavní paprsek and 4 boční krycí střely vyčistí obrazovku.',
           costs: { crystals: 0, diamonds: 90, obsidian: 25 },
+        },
+        {
+          level: 6,
+          title: 'Super-Nova dělo',
+          description: 'Vystřeluje 7 ničivých paprsků naráz v gigantickém rozptylu s vysokou frekvencí střelby.',
+          costs: { crystals: 0, diamonds: 140, obsidian: 45 },
+        },
+        {
+          level: 7,
+          title: 'Hyperprostorová anihilace',
+          description: 'Absolutní zbraňový arzenál! 9 hyper-laserů s anihilačním jádrem, které dává +100 % ke všem bodům za zničení.',
+          costs: { crystals: 0, diamonds: 220, obsidian: 75 },
         },
       ],
     },
@@ -313,6 +325,90 @@ export default function UpgradeShop({
           title: 'Singularita Vacuum',
           description: 'Trvá 12 sekund, omezuje herní tření, přitahuje suroviny bleskovou rychlostí (+150 %).',
           costs: { crystals: 0, diamonds: 65, obsidian: 20 },
+        },
+      ],
+    },
+    {
+      id: 'scoreMultiplierLevel',
+      name: 'Datový multiplikátor skóre',
+      description: 'Zlepšuje datový skener těžební lodi, čímž násobí zisk skóre ze všech zničených asteroidů, pirate lodí a nasbírané rudy.',
+      icon: <Star className="w-5 h-5 text-amber-300" id="icon-multiplier" />,
+      levels: [
+        {
+          level: 2,
+          title: 'Optimalizovaný záznam',
+          description: 'Navýší zisk skóre o +25 % ze všech zdrojů.',
+          costs: { crystals: 0, diamonds: 10, obsidian: 1 },
+        },
+        {
+          level: 3,
+          title: 'Skenování fázových jader',
+          description: 'Navýší zisk skóre o +50 % ze všech zdrojů.',
+          costs: { crystals: 0, diamonds: 25, obsidian: 4 },
+        },
+        {
+          level: 4,
+          title: 'Fázový datový uzel',
+          description: 'Navýší zisk skóre o +75 % ze všech zdrojů.',
+          costs: { crystals: 0, diamonds: 50, obsidian: 12 },
+        },
+        {
+          level: 5,
+          title: 'Kvantové archivy milénia',
+          description: 'Dvojnásobný zisk skóre ze všeho (včetně zničených korzárů)!',
+          costs: { crystals: 0, diamonds: 110, obsidian: 30 },
+        },
+      ],
+    },
+    {
+      id: 'abilitySockLevel',
+      name: 'Smradlavá ponožka (Aktivní Y)',
+      description: 'Vystřelí extrémně toxickou, zapáchající ponožku, která po nárazu vybuchne do oblaku smradlavého plynu a leptá všechny okolní cíle.',
+      icon: <span className="text-xl">🧦</span>,
+      levels: [
+        {
+          level: 1,
+          title: 'Toxický ráz',
+          description: 'Aktivuje schopnost. Vystřelí ponožku vytvářející menší plynný oblak s poškozením 3.5 HP/s.',
+          costs: { crystals: 0, diamonds: 8, obsidian: 1 },
+        },
+        {
+          level: 2,
+          title: 'Koncentrovaný sýr',
+          description: 'O 50 % větší dosah oblaku a vyšší leptavé poškození (7.0 HP/s).',
+          costs: { crystals: 0, diamonds: 24, obsidian: 5 },
+        },
+        {
+          level: 3,
+          title: 'Biologická zbraň',
+          description: 'Absolutní zamoření! Gigantická zóna smradu s brutálním poškozením 10.5 HP/s.',
+          costs: { crystals: 0, diamonds: 60, obsidian: 16 },
+        },
+      ],
+    },
+    {
+      id: 'miningDronesLevel',
+      name: 'Automatické drony',
+      description: 'Pasivní droni, kteří poletují kolem lodi, sbírají krystaly a automaticky těží z okolních asteroidů krystaly, když bojujete.',
+      icon: <Cpu className="w-5 h-5 text-lime-400" id="icon-mining-drones" />,
+      levels: [
+        {
+          level: 1,
+          title: 'Pasivní sběrač',
+          description: 'Aktivuje 1 drona, který poletuje kolem lodi a magneticky sbírá krystaly z dálky, čímž vám uvolňuje ruce k boji.',
+          costs: { crystals: 0, diamonds: 10, obsidian: 1 },
+        },
+        {
+          level: 2,
+          title: 'Těžební laserový dron',
+          description: 'Zvyšuje počet dronů na 2. Drony nyní střílí drobné těžební lasery do blízkých asteroidů, čímž z nich těží dodatečné krystaly.',
+          costs: { crystals: 0, diamonds: 28, obsidian: 5 },
+        },
+        {
+          level: 3,
+          title: 'Autonomní těžební roj',
+          description: 'Celkem 3 drony s větším dosahem. Rychlost sběru a frekvence laserové těžby asteroidů se zvýší o 50 %.',
+          costs: { crystals: 0, diamonds: 65, obsidian: 15 },
         },
       ],
     },
@@ -656,6 +752,74 @@ export default function UpgradeShop({
                   })}
                 </div>
               )}
+
+              {/* SPECIAL PERSISTENT UPGRADE: BLACK HOLE ACTIVATOR */}
+              <div className="border border-purple-900/60 rounded-xl p-4 bg-purple-950/10 space-y-3 relative overflow-hidden mt-4">
+                <div className="absolute -right-6 -bottom-6 opacity-10 text-purple-400 pointer-events-none">
+                  <Waves className="w-24 h-24" />
+                </div>
+                
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex gap-2.5 items-center">
+                    <div className="p-2 rounded-xl bg-purple-900/30 border border-purple-800/40">
+                      <Waves className="w-5 h-5 text-purple-400" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-purple-200 text-base">Aktivátor černé díry</h4>
+                      <span className="text-xs text-purple-400 font-medium">
+                        {upgrades.blackHoleActivator === 1 ? '✓ PŘIPRAVEN V HLAVNÍM MENU' : 'Speciální fázový klíč'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {upgrades.blackHoleActivator === 1 && (
+                    <span className="text-[10px] text-emerald-400 bg-emerald-950/40 px-2 py-1 border border-emerald-900/30 rounded-full font-bold uppercase tracking-wider">
+                      Zakoupeno
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed pl-1">
+                  Klíč k dimenzi hlavního bosse. Po zakoupení se v hlavním menu odemkne možnost vstoupit do černé díry a čelit Omega Korzárovi o herní vítězství a masivní odměnu!
+                </p>
+
+                {upgrades.blackHoleActivator === 0 ? (
+                  <div className="bg-slate-950/70 border border-slate-900 rounded-xl p-3 space-y-2 mt-1">
+                    <div className="pt-1 flex flex-wrap gap-x-4 gap-y-2">
+                      <span className="text-xs font-semibold text-slate-400">Cena fázového klíče:</span>
+                      <div className="flex flex-wrap gap-2.5 text-xs">
+                        <div className={`flex items-center gap-1 ${stats.diamonds >= 80 ? 'text-blue-400 font-bold' : 'text-slate-500 line-through'}`}>
+                          <Gem className="w-3.5 h-3.5" />
+                          <span>80 diamantů</span>
+                        </div>
+                        <div className={`flex items-center gap-1 ${stats.obsidian >= 20 ? 'text-purple-400 font-bold' : 'text-slate-500 line-through'}`}>
+                          <Star className="w-3.5 h-3.5" />
+                          <span>20 obsidiánů</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        disabled={stats.diamonds < 80 || stats.obsidian < 20}
+                        onClick={() => handlePurchaseUpgrade('blackHoleActivator', { crystals: 0, diamonds: 80, obsidian: 20 }, 1)}
+                        className={`w-full py-2 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
+                          stats.diamonds >= 80 && stats.obsidian >= 20
+                            ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-500/15 hover:scale-[1.01]'
+                            : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                        }`}
+                        id="upgrade-btn-activator"
+                      >
+                        Zakoupit fázový aktivátor
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-emerald-950/20 border border-emerald-900/30 rounded-xl p-3 text-xs text-emerald-300 font-semibold leading-relaxed">
+                    Portál do Černé díry je plně stabilizován! Spusťte hru z hlavního menu tlačítkem &quot;Vstoupit do Černé díry&quot; a porazte Omega Korzára!
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

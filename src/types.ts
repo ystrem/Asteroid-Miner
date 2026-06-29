@@ -91,6 +91,10 @@ export interface Upgrades {
   abilityLightningLevel: number;   // 0 to 3
   abilityPulseLevel: number;       // 0 to 3
   abilitySuperMagnetLevel: number; // 0 to 3
+  scoreMultiplierLevel: number;    // 1 to 5
+  abilitySockLevel: number;        // 0 to 3 (Smradlavá ponožka special attack)
+  blackHoleActivator: number;      // 0 to 1 (0 = Not acquired, 1 = Acquired)
+  miningDronesLevel: number;       // 0 to 3 (Automatic mining drones level)
 }
 
 export interface PlayerStats {
@@ -158,5 +162,36 @@ export interface PirateLaser {
   color: string;
   lifetime: number;
   maxLifetime: number;
+}
+
+export interface SockEntity {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  radius: number;
+  lifetime: number;
+  maxLifetime: number;
+  damage: number;
+  isExploded: boolean;
+  explosionRadius: number;
+  explosionTimer: number; // Ticks for stinky gas cloud duration
+}
+
+export interface Boss {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+  state: 'intro' | 'moving' | 'rage' | 'active'; // support all states
+  lastFired: number;
+  lastShieldFired: number;
+  lastValuableMove?: number;
 }
 
