@@ -8,7 +8,7 @@ export interface Vector2D {
   y: number;
 }
 
-export type AsteroidSize = 'huge' | 'large' | 'medium' | 'small';
+export type AsteroidSize = 'colossal' | 'huge' | 'large' | 'medium' | 'small';
 export type OreType = 'crystal' | 'diamond' | 'obsidian';
 
 export interface Asteroid {

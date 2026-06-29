@@ -63,6 +63,7 @@ import {
 } from 'lucide-react';
 
 const ASTEROID_COLORS = {
+  colossal: '#374151', // deep gray-700
   huge: '#4b5563',   // gray-600
   large: '#6b7280',  // gray-500
   medium: '#9ca3af', // gray-405
@@ -81,6 +82,8 @@ export default function App() {
   const [showHowTo, setShowHowTo] = useState<boolean>(false);
   const [gameMode, setGameMode] = useState<'single' | 'coop'>('single');
   const [gamepadsDetected, setGamepadsDetected] = useState<boolean[]>([false, false]);
+  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
+  const [enemiesEnabled, setEnemiesEnabled] = useState<boolean>(true);
 
   // Floating notifications/gains to display on screen
   const [gains, setGains] = useState<{ id: string; text: string; x: number; y: number; color: string }[]>([]);
@@ -155,6 +158,8 @@ export default function App() {
   const superMagnetActiveRef = useRef<number>(0);
 
   const gameModeRef = useRef<'single' | 'coop'>('single');
+  const difficultyRef = useRef<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
+  const enemiesEnabledRef = useRef<boolean>(true);
 
   // Astronaut explorer minigame state
   const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(false);
@@ -243,6 +248,11 @@ export default function App() {
     });
     setActivePlayers([...playersRef.current]);
   }, [upgrades]);
+
+  useEffect(() => {
+    difficultyRef.current = difficulty;
+    enemiesEnabledRef.current = enemiesEnabled;
+  }, [difficulty, enemiesEnabled]);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -563,6 +573,48 @@ export default function App() {
     starsRef.current = stars;
   };
 
+  // Multipliers calculated from difficulty
+  const getDifficultySettings = (diff: 'easy' | 'medium' | 'hard' | 'nightmare') => {
+    switch (diff) {
+      case 'easy':
+        return {
+          damageTakenMultiplier: 0.5,
+          drillSpeedMultiplier: 1.5,
+          pirateSpawnChanceMultiplier: 0.1,
+          pirateHpMultiplier: 0.6,
+          pirateLaserDamageMultiplier: 0.5,
+          solarStormDamageMultiplier: 0.5,
+        };
+      case 'medium':
+        return {
+          damageTakenMultiplier: 1.0,
+          drillSpeedMultiplier: 1.0,
+          pirateSpawnChanceMultiplier: 1.0,
+          pirateHpMultiplier: 1.0,
+          pirateLaserDamageMultiplier: 1.0,
+          solarStormDamageMultiplier: 1.0,
+        };
+      case 'hard':
+        return {
+          damageTakenMultiplier: 1.5,
+          drillSpeedMultiplier: 0.8,
+          pirateSpawnChanceMultiplier: 1.6,
+          pirateHpMultiplier: 1.4,
+          pirateLaserDamageMultiplier: 1.5,
+          solarStormDamageMultiplier: 1.4,
+        };
+      case 'nightmare':
+        return {
+          damageTakenMultiplier: 2.2,
+          drillSpeedMultiplier: 0.6,
+          pirateSpawnChanceMultiplier: 2.5,
+          pirateHpMultiplier: 2.0,
+          pirateLaserDamageMultiplier: 2.2,
+          solarStormDamageMultiplier: 2.0,
+        };
+    }
+  };
+
   // Spawns an asteroid in a safe ring around player coordinates
   const createProceduralAsteroid = (
     size: AsteroidSize, 
@@ -613,25 +665,30 @@ export default function App() {
 
     // Larger, walkable asteroid sizes!
     switch (size) {
+      case 'colossal':
+        hp = 60;
+        radius = 320;
+        points = 500;
+        break;
       case 'huge':
-        hp = 24;
-        radius = 180;
-        points = 150;
+        hp = 30;
+        radius = 220;
+        points = 200;
         break;
       case 'large':
-        hp = 12;
-        radius = 120;
-        points = 80;
+        hp = 16;
+        radius = 140;
+        points = 100;
         break;
       case 'medium':
-        hp = 6;
-        radius = 75;
-        points = 40;
+        hp = 8;
+        radius = 85;
+        points = 50;
         break;
       case 'small':
-        hp = 3;
-        radius = 45;
-        points = 20;
+        hp = 4;
+        radius = 50;
+        points = 25;
         break;
     }
 
@@ -701,8 +758,9 @@ export default function App() {
       // Pick random size, skewed towards large & medium for good mining!
       const roll = Math.random();
       let size: AsteroidSize = 'medium';
-      if (roll < 0.15) size = 'huge';
-      else if (roll < 0.4) size = 'large';
+      if (roll < 0.05) size = 'colossal';
+      else if (roll < 0.18) size = 'huge';
+      else if (roll < 0.42) size = 'large';
       else if (roll < 0.75) size = 'medium';
       else size = 'small';
 
@@ -1012,7 +1070,11 @@ export default function App() {
       let oCount = 0;
       let cCount = 0;
       
-      if (size === 'huge') {
+      if (size === 'colossal') {
+        dCount = 14 + Math.floor(Math.random() * 8);  // 14-21
+        oCount = 8 + Math.floor(Math.random() * 6);   // 8-13
+        cCount = 20 + Math.floor(Math.random() * 10); // 20-29
+      } else if (size === 'huge') {
         dCount = 8 + Math.floor(Math.random() * 5);  // 8-12
         oCount = 4 + Math.floor(Math.random() * 4);  // 4-7
         cCount = 12 + Math.floor(Math.random() * 8); // 12-19
@@ -1035,7 +1097,19 @@ export default function App() {
       for (let i = 0; i < cCount; i++) drops.push(createOreEntity(ax, ay, 'crystal', true));
     } else {
       // General sizes: doubled drop count to make asteroids rain down with materials!
-      if (size === 'huge') {
+      if (size === 'colossal') {
+        drops.push(createOreEntity(ax, ay, 'obsidian'));
+        drops.push(createOreEntity(ax, ay, 'obsidian', true));
+        drops.push(createOreEntity(ax, ay, 'obsidian', true));
+        const diamondCount = 6 + Math.floor(Math.random() * 5); // 6-10
+        for (let i = 0; i < diamondCount; i++) {
+          drops.push(createOreEntity(ax, ay, 'diamond', true));
+        }
+        const crystalCount = 14 + Math.floor(Math.random() * 8); // 14-21
+        for (let i = 0; i < crystalCount; i++) {
+          drops.push(createOreEntity(ax, ay, 'crystal', true));
+        }
+      } else if (size === 'huge') {
         drops.push(createOreEntity(ax, ay, 'obsidian'));
         drops.push(createOreEntity(ax, ay, 'obsidian', true));
         const diamondCount = 3 + Math.floor(Math.random() * 3); // 3-5
@@ -1473,7 +1547,8 @@ export default function App() {
 
           // DRILLING CYCLE
           if (p.isDrilling) {
-            p.drillTime = (p.drillTime || 0) + 1;
+            const diffSettings = getDifficultySettings(difficultyRef.current);
+            p.drillTime = (p.drillTime || 0) + diffSettings.drillSpeedMultiplier;
             // Spawn spark/soil particles flying from the drill contact point!
             if (Math.random() < 0.4) {
               const sparkAngle = p.angle + Math.PI + (Math.random() * 0.8 - 0.4);
@@ -1756,7 +1831,7 @@ export default function App() {
           if (p.hull > 0) {
             if (p.invulnerableTime > 0) return;
             
-            // Checking if player is shadowed behind ANY large / huge asteroid relative to wind direction!
+            // Checking if player is shadowed behind ANY large / huge / colossal asteroid relative to wind direction!
             let isShadowed = false;
             const windDirX = Math.cos(solarStormDirectionRef.current);
             const windDirY = Math.sin(solarStormDirectionRef.current);
@@ -1766,7 +1841,7 @@ export default function App() {
               isShadowed = true; 
             } else {
               asteroidsRef.current.forEach(ast => {
-                if (ast.size === 'huge' || ast.size === 'large') {
+                if (ast.size === 'colossal' || ast.size === 'huge' || ast.size === 'large') {
                   const dx = p.x - ast.x;
                   const dy = p.y - ast.y;
                   const distToAst = Math.hypot(dx, dy);
@@ -1786,13 +1861,17 @@ export default function App() {
             if (!isShadowed) {
               // Apply radiation damage!
               if (solarStormDurationRef.current % 45 === 0) {
+                const diffSettings = getDifficultySettings(difficultyRef.current);
+                const stormDmgShield = Math.max(1, Math.round(8 * diffSettings.solarStormDamageMultiplier));
+                const stormDmgHull = Math.max(1, Math.round(5 * diffSettings.solarStormDamageMultiplier));
+
                 if (p.shield > 0) {
-                  p.shield = Math.max(0, p.shield - 8);
-                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA ŠTÍT!`, '#fb923c');
+                  p.shield = Math.max(0, p.shield - stormDmgShield);
+                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA ŠTÍT! (-${stormDmgShield} HP)`, '#fb923c');
                   playDamageSound();
                 } else {
-                  p.hull = Math.max(0, p.hull - 5);
-                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA TRUP!`, '#ef4444');
+                  p.hull = Math.max(0, p.hull - stormDmgHull);
+                  addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA TRUP! (-${stormDmgHull} HP)`, '#ef4444');
                   playDamageSound();
                   
                   if (p.hull <= 0) {
@@ -1827,13 +1906,18 @@ export default function App() {
     }
 
     // --- COSMIC PIRATES SPAWN AND TICK ENGINE ---
-    // Spawn chance: if random check succeeds and isPlaying and pirates counts < 2
-    if (Math.random() < 0.0025 && piratesRef.current.length < 2) {
+    // Spawn chance: if random check succeeds and isPlaying and pirates counts < maxCount and enemies are enabled
+    const diffSettings = getDifficultySettings(difficultyRef.current);
+    const maxPirates = difficultyRef.current === 'easy' ? 1 : difficultyRef.current === 'medium' ? 2 : difficultyRef.current === 'hard' ? 3 : 4;
+    
+    if (enemiesEnabledRef.current && Math.random() < 0.0025 * diffSettings.pirateSpawnChanceMultiplier && piratesRef.current.length < maxPirates) {
       const pX = lastCamXRef.current;
       const pY = lastCamYRef.current;
       const angle = Math.random() * Math.PI * 2;
       const spawnX = pX + Math.cos(angle) * (width / 2 + 150 + Math.random() * 200);
       const spawnY = pY + Math.sin(angle) * (height / 2 + 150 + Math.random() * 200);
+
+      const baseHp = Math.round(120 * diffSettings.pirateHpMultiplier);
 
       piratesRef.current.push({
         id: Math.random().toString(36).substring(2, 9),
@@ -1842,8 +1926,8 @@ export default function App() {
         vx: (Math.random() - 0.5) * 2,
         vy: (Math.random() - 0.5) * 2,
         angle: Math.random() * Math.PI * 2,
-        hp: 120,
-        maxHp: 120,
+        hp: baseHp,
+        maxHp: baseHp,
         radius: 17,
         lastFired: 0,
         color: '#f43f5e'
@@ -1878,21 +1962,41 @@ export default function App() {
         pirate.vx = Math.cos(pirate.angle) * spd;
         pirate.vy = Math.sin(pirate.angle) * spd;
 
-        // Fire at closest player within range (450px) and cooldown is over (1.5s)
-        if (closestDist < 450 && Date.now() - pirate.lastFired > 1500) {
+        // Fire at closest player within range (450px) and cooldown is over
+        const cooldownMs = difficultyRef.current === 'easy' ? 2500 : difficultyRef.current === 'medium' ? 1500 : difficultyRef.current === 'hard' ? 1000 : 650;
+        if (closestDist < 450 && Date.now() - pirate.lastFired > cooldownMs) {
           pirate.lastFired = Date.now();
-          pirateLasersRef.current.push({
-            id: Math.random().toString(36).substring(2, 9),
-            x: pirate.x + Math.cos(pirate.angle) * 20,
-            y: pirate.y + Math.sin(pirate.angle) * 20,
-            vx: Math.cos(pirate.angle) * 7.5,
-            vy: Math.sin(pirate.angle) * 7.5,
-            angle: pirate.angle,
-            radius: 4.5,
-            color: '#f43f5e',
-            lifetime: 0,
-            maxLifetime: 65
-          });
+          if (difficultyRef.current === 'nightmare') {
+            // Dual laser blast!
+            const angles = [pirate.angle - 0.15, pirate.angle + 0.15];
+            angles.forEach(ang => {
+              pirateLasersRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: pirate.x + Math.cos(ang) * 20,
+                y: pirate.y + Math.sin(ang) * 20,
+                vx: Math.cos(ang) * 8.5,
+                vy: Math.sin(ang) * 8.5,
+                angle: ang,
+                radius: 4.5,
+                color: '#f43f5e',
+                lifetime: 0,
+                maxLifetime: 65
+              });
+            });
+          } else {
+            pirateLasersRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: pirate.x + Math.cos(pirate.angle) * 20,
+              y: pirate.y + Math.sin(pirate.angle) * 20,
+              vx: Math.cos(pirate.angle) * 7.5,
+              vy: Math.sin(pirate.angle) * 7.5,
+              angle: pirate.angle,
+              radius: 4.5,
+              color: '#f43f5e',
+              lifetime: 0,
+              maxLifetime: 65
+            });
+          }
           playLaserSound(1);
         }
       } else {
@@ -1923,12 +2027,16 @@ export default function App() {
         if (p.hull > 0 && p.invulnerableTime <= 0 && pl.lifetime < pl.maxLifetime) {
           const d = Math.hypot(p.x - pl.x, p.y - pl.y);
           if (d < p.radius + pl.radius) {
+            const diffSettings = getDifficultySettings(difficultyRef.current);
+            const pirateDmgShield = Math.max(1, Math.round(14 * diffSettings.pirateLaserDamageMultiplier));
+            const pirateDmgHull = Math.max(1, Math.round(8 * diffSettings.pirateLaserDamageMultiplier));
+
             if (p.shield > 0) {
-              p.shield = Math.max(0, p.shield - 14);
-              addGainNotification(`💥 ${p.name} - ABSORBOVÁN ZÁSAH ŠTÍTEM!`, '#fb923c');
+              p.shield = Math.max(0, p.shield - pirateDmgShield);
+              addGainNotification(`💥 ${p.name} - ABSORBOVÁN ZÁSAH ŠTÍTEM! (-${pirateDmgShield} HP)`, '#fb923c');
             } else {
-              p.hull = Math.max(0, p.hull - 8);
-              addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN RAKETAMI!`, '#ef4444');
+              p.hull = Math.max(0, p.hull - pirateDmgHull);
+              addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN KORZÁREM! (-${pirateDmgHull} HP)`, '#ef4444');
               if (p.hull <= 0) {
                 addGainNotification(`💀 ${p.name} ZNIČEN PIRÁTY!`, '#ef4444');
                 triggerShipCatastrophicFailure();
@@ -2311,12 +2419,16 @@ export default function App() {
             p.invulnerableTime = 70;
 
             let rawDmg = 8;
-            if (asteroid.size === 'huge') rawDmg = 38;
+            if (asteroid.size === 'colossal') rawDmg = 55;
+            else if (asteroid.size === 'huge') rawDmg = 38;
             else if (asteroid.size === 'large') rawDmg = 24;
             else if (asteroid.size === 'medium') rawDmg = 14;
 
+            const diffSettings = getDifficultySettings(difficultyRef.current);
+            const difficultyMultiplier = diffSettings.damageTakenMultiplier;
+
             const armorMultiplier = Math.max(0.65, 1.0 - (upgradesRef.current.hullLevel - 1) * 0.08);
-            const calculatedDmg = Math.round(rawDmg * armorMultiplier);
+            const calculatedDmg = Math.round(rawDmg * armorMultiplier * difficultyMultiplier);
 
             playDamageSound();
 
@@ -2760,7 +2872,7 @@ export default function App() {
 
     // Donkey Keeper Magma Chain Explosion (Řetězová exploze)
     if (asteroid.asteroidType === 'magma') {
-      const explRadius = asteroid.size === 'huge' ? 220 : asteroid.size === 'large' ? 170 : asteroid.size === 'medium' ? 120 : 80;
+      const explRadius = asteroid.size === 'colossal' ? 320 : asteroid.size === 'huge' ? 220 : asteroid.size === 'large' ? 170 : asteroid.size === 'medium' ? 120 : 80;
       triggerChainExplosionWave(asteroid.x, asteroid.y, explRadius, asteroid.id);
       addGainNotification("KOMBO: ŘETĚZOVÁ EXPLOZE!", "#f97316");
     }
@@ -2770,7 +2882,10 @@ export default function App() {
       let nextSize: AsteroidSize = 'small';
       let splitCount = 3 + Math.floor(Math.random() * 2); // 3 to 4 smaller pieces splitter
 
-      if (asteroid.size === 'huge') {
+      if (asteroid.size === 'colossal') {
+        nextSize = 'huge';
+        splitCount = 2; // splits into 2 huge asteroids
+      } else if (asteroid.size === 'huge') {
         nextSize = 'large';
         splitCount = 2 + Math.floor(Math.random() * 2); // 2 to 3
       } else if (asteroid.size === 'large') {
@@ -2843,7 +2958,7 @@ export default function App() {
 
   // --- VISUAL EFFECT PARTICLE EMITTERS ---
   const triggerAsteroidPieceExplosionParticles = (asteroid: Asteroid) => {
-    const particleCount = asteroid.size === 'huge' ? 40 : asteroid.size === 'large' ? 25 : 12;
+    const particleCount = asteroid.size === 'colossal' ? 65 : asteroid.size === 'huge' ? 40 : asteroid.size === 'large' ? 25 : 12;
     for (let i = 0; i < particleCount; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = Math.random() * 3.5 + 0.8;
@@ -3039,7 +3154,7 @@ export default function App() {
         ctx.lineWidth = 2.5;
         ctx.lineJoin = 'round';
         
-        ctx.shadowBlur = ast.size === 'huge' ? 5 : 2;
+        ctx.shadowBlur = ast.size === 'colossal' ? 8 : ast.size === 'huge' ? 5 : 2;
         ctx.shadowColor = ast.color;
 
         ctx.beginPath();
@@ -4090,6 +4205,126 @@ export default function App() {
                   💡 Tip: Připojte Bluetooth/USB gamepady pro epickou hru s kamarády na jedné obrazovce!
                 </div>
               )}
+            </div>
+
+            {/* Mission Configuration Panel */}
+            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-4 text-left">
+              <span className="text-cyan-400 font-extrabold uppercase tracking-wider text-[10px] block font-sans">🛡️ NASTAVENÍ EXPEDIČNÍ MISE</span>
+              
+              {/* Difficulty Select */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 block">Obtížnost:</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDifficulty('easy');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                      difficulty === 'easy'
+                        ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)] font-bold'
+                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      SNADNÁ
+                    </span>
+                    <span className="text-[8px] text-slate-500 mt-0.5">Vrtání +50%, Škody -50%</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDifficulty('medium');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                      difficulty === 'medium'
+                        ? 'bg-blue-950/40 border-blue-500 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.15)] font-bold'
+                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      STŘEDNÍ
+                    </span>
+                    <span className="text-[8px] text-slate-500 mt-0.5">Klasický zážitek</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDifficulty('hard');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                      difficulty === 'hard'
+                        ? 'bg-amber-950/40 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
+                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      TĚŽKÁ
+                    </span>
+                    <span className="text-[8px] text-slate-500 mt-0.5">Vrtání -20%, Škody +50%</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDifficulty('nightmare');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                      difficulty === 'nightmare'
+                        ? 'bg-rose-950/40 border-rose-500 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.15)] font-bold animate-pulse'
+                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-rose-950/40 hover:text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1 text-rose-400 font-bold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      NOČNÍ MŮRA
+                    </span>
+                    <span className="text-[8px] text-rose-500/80 mt-0.5">Škody +120%, Dual-Lasery</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Enemy Toggle Option */}
+              <div className="flex items-center justify-between bg-slate-900/35 p-2.5 rounded-lg border border-slate-850">
+                <div className="space-y-0.5 pr-2">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    🛡️ Nepřátelské lodě a korzáři:
+                    <span className={`px-1.5 py-0.5 text-[8px] font-mono font-black uppercase rounded ${
+                      enemiesEnabled ? 'bg-red-950 text-red-400 border border-red-900/50' : 'bg-emerald-950 text-emerald-400 border border-emerald-900/50'
+                    }`}>
+                      {enemiesEnabled ? 'AKTIVNÍ' : 'DEAKTIVOVÁNO'}
+                    </span>
+                  </label>
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                    Pokud jsou deaktivováni, nebudou se v sektoru objevovat žádné pirátské lodě, což umožňuje klidnou těžbu.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEnemiesEnabled(!enemiesEnabled);
+                    playLaserSound(0);
+                  }}
+                  className={`w-12 h-6 rounded-full p-0.5 transition-all cursor-pointer outline-none relative flex items-center shrink-0 ${
+                    enemiesEnabled ? 'bg-red-600' : 'bg-slate-800'
+                  }`}
+                  id="enemies-toggle-btn"
+                >
+                  <div className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200 ${
+                    enemiesEnabled ? 'translate-x-6' : 'translate-x-0'
+                  }`} />
+                </button>
+              </div>
             </div>
 
             {/* Launch Actions */}
