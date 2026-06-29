@@ -202,7 +202,7 @@ export default function App() {
 
     if (closestAst) {
       const ast = closestAst as Asteroid;
-      const margin = ast.radius + p.radius + 35;
+      const margin = ast.radius + p.radius + 250;
       if (minDist <= margin) {
         p.anchoredAsteroidId = ast.id;
         p.anchorRadius = minDist;
@@ -570,7 +570,7 @@ export default function App() {
     customY?: number, 
     customVx?: number, 
     customVy?: number,
-    forcedType?: 'common' | 'magma' | 'ice' | 'crystal'
+    forcedType?: 'common' | 'magma' | 'ice' | 'crystal' | 'gold-rush'
   ): Asteroid => {
     let px = 0;
     let py = 0;
@@ -611,26 +611,27 @@ export default function App() {
       vy = Math.sin(moveAngle) * speed;
     }
 
+    // Larger, walkable asteroid sizes!
     switch (size) {
       case 'huge':
-        hp = 12;
-        radius = 55;
-        points = 80;
+        hp = 24;
+        radius = 180;
+        points = 150;
         break;
       case 'large':
-        hp = 6;
-        radius = 35;
-        points = 40;
+        hp = 12;
+        radius = 120;
+        points = 80;
         break;
       case 'medium':
-        hp = 3;
-        radius = 22;
-        points = 20;
+        hp = 6;
+        radius = 75;
+        points = 40;
         break;
       case 'small':
-        hp = 1;
-        radius = 12;
-        points = 10;
+        hp = 3;
+        radius = 45;
+        points = 20;
         break;
     }
 
@@ -646,21 +647,27 @@ export default function App() {
       });
     }
 
-    let asteroidType: 'common' | 'magma' | 'ice' | 'crystal' = forcedType || 'common';
+    let asteroidType: 'common' | 'magma' | 'ice' | 'crystal' | 'gold-rush' = forcedType || 'common';
     let color = ASTEROID_COLORS[size];
 
     if (!forcedType) {
       const typeRoll = Math.random();
-      if (typeRoll < 0.16) {
+      if (typeRoll < 0.12) {
+        asteroidType = 'gold-rush'; // 12% rare gold-rush!
+      } else if (typeRoll < 0.26) {
         asteroidType = 'magma';
-      } else if (typeRoll < 0.32) {
+      } else if (typeRoll < 0.40) {
         asteroidType = 'ice';
-      } else if (typeRoll < 0.44) {
+      } else if (typeRoll < 0.52) {
         asteroidType = 'crystal';
       }
     }
 
-    if (asteroidType === 'magma') {
+    if (asteroidType === 'gold-rush') {
+      color = '#eab308'; // glowing golden yellow
+      hp = Math.round(hp * 2.2); // vyšší HP
+      points = points * 3; // bonusové skóre
+    } else if (asteroidType === 'magma') {
       color = '#f97316'; // glowing fiery orange-red
     } else if (asteroidType === 'ice') {
       color = '#38bdf8'; // glowing ice cyan
@@ -875,11 +882,11 @@ export default function App() {
   };
 
   const handleRepair = (cost: number, healAmount: number) => {
-    if (stats.crystals < cost) return;
+    if (stats.diamonds < cost) return;
 
     const updatedStats = {
       ...stats,
-      crystals: stats.crystals - cost,
+      diamonds: stats.diamonds - cost,
     };
 
     setStats(updatedStats);
@@ -902,11 +909,11 @@ export default function App() {
   };
 
   const handleRechargeShield = (cost: number) => {
-    if (stats.crystals < cost || upgrades.shieldLevel === 0) return;
+    if (stats.diamonds < cost || upgrades.shieldLevel === 0) return;
 
     const updatedStats = {
       ...stats,
-      crystals: stats.crystals - cost,
+      diamonds: stats.diamonds - cost,
     };
 
     setStats(updatedStats);
@@ -996,45 +1003,73 @@ export default function App() {
   };
 
   // --- ORE DROP GENERATOR (RADIAL EXPLOSIONS) ---
-  const triggerSpawnAsteroidDrops = (ax: number, ay: number, size: AsteroidSize) => {
+  const triggerSpawnAsteroidDrops = (ax: number, ay: number, size: AsteroidSize, type?: 'common' | 'magma' | 'ice' | 'crystal' | 'gold-rush') => {
     const drops: Ore[] = [];
     
-    // Choose what drops based on size
-    if (size === 'huge') {
-      // 1 Principal Obsidian Core 
-      drops.push(createOreEntity(ax, ay, 'obsidian'));
-      // 1-2 Diamonds flying outward
-      const diamondCount = 1 + Math.floor(Math.random() * 2);
-      for (let i = 0; i < diamondCount; i++) {
-        drops.push(createOreEntity(ax, ay, 'diamond', true));
+    // If it's a Gold-rush asteroid, we spawn a HUGE amount of diamonds and obsidians!
+    if (type === 'gold-rush') {
+      let dCount = 0;
+      let oCount = 0;
+      let cCount = 0;
+      
+      if (size === 'huge') {
+        dCount = 8 + Math.floor(Math.random() * 5);  // 8-12
+        oCount = 4 + Math.floor(Math.random() * 4);  // 4-7
+        cCount = 12 + Math.floor(Math.random() * 8); // 12-19
+      } else if (size === 'large') {
+        dCount = 5 + Math.floor(Math.random() * 4);  // 5-8
+        oCount = 2 + Math.floor(Math.random() * 3);  // 2-4
+        cCount = 8 + Math.floor(Math.random() * 6);  // 8-13
+      } else if (size === 'medium') {
+        dCount = 3 + Math.floor(Math.random() * 2);  // 3-4
+        oCount = 1 + Math.floor(Math.random() * 2);  // 1-2
+        cCount = 5 + Math.floor(Math.random() * 4);  // 5-8
+      } else {
+        dCount = 1 + Math.floor(Math.random() * 2);  // 1-2
+        oCount = Math.random() < 0.4 ? 1 : 0;
+        cCount = 2 + Math.floor(Math.random() * 3);  // 2-4
       }
-      // 4-6 Crystals flying outward
-      const crystalCount = 4 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < crystalCount; i++) {
-        drops.push(createOreEntity(ax, ay, 'crystal', true));
-      }
-    } else if (size === 'large') {
-      // 1 Core Diamond
-      drops.push(createOreEntity(ax, ay, 'diamond'));
-      // Occasional Obsidian chance (15%)
-      if (Math.random() < 0.15) {
-        drops.push(createOreEntity(ax, ay, 'obsidian', true));
-      }
-      // 3-4 Crystals
-      const crystalCount = 3 + Math.floor(Math.random() * 2);
-      for (let i = 0; i < crystalCount; i++) {
-        drops.push(createOreEntity(ax, ay, 'crystal', true));
-      }
-    } else if (size === 'medium') {
-      // 1 Core Crystal
-      drops.push(createOreEntity(ax, ay, 'crystal'));
-      // 1 Diamond or Crystal extra
-      const extrType: OreType = Math.random() < 0.3 ? 'diamond' : 'crystal';
-      drops.push(createOreEntity(ax, ay, extrType, true));
+      
+      for (let i = 0; i < dCount; i++) drops.push(createOreEntity(ax, ay, 'diamond', true));
+      for (let i = 0; i < oCount; i++) drops.push(createOreEntity(ax, ay, 'obsidian', true));
+      for (let i = 0; i < cCount; i++) drops.push(createOreEntity(ax, ay, 'crystal', true));
     } else {
-      // Small shards: 35% chance of 1 Crystal
-      if (Math.random() < 0.35) {
+      // General sizes: doubled drop count to make asteroids rain down with materials!
+      if (size === 'huge') {
+        drops.push(createOreEntity(ax, ay, 'obsidian'));
+        drops.push(createOreEntity(ax, ay, 'obsidian', true));
+        const diamondCount = 3 + Math.floor(Math.random() * 3); // 3-5
+        for (let i = 0; i < diamondCount; i++) {
+          drops.push(createOreEntity(ax, ay, 'diamond', true));
+        }
+        const crystalCount = 8 + Math.floor(Math.random() * 5); // 8-12
+        for (let i = 0; i < crystalCount; i++) {
+          drops.push(createOreEntity(ax, ay, 'crystal', true));
+        }
+      } else if (size === 'large') {
+        drops.push(createOreEntity(ax, ay, 'diamond'));
+        if (Math.random() < 0.4) {
+          drops.push(createOreEntity(ax, ay, 'obsidian', true));
+        }
+        const crystalCount = 6 + Math.floor(Math.random() * 4); // 6-9
+        for (let i = 0; i < crystalCount; i++) {
+          drops.push(createOreEntity(ax, ay, 'crystal', true));
+        }
+      } else if (size === 'medium') {
         drops.push(createOreEntity(ax, ay, 'crystal'));
+        const extrType: OreType = Math.random() < 0.5 ? 'diamond' : 'crystal';
+        drops.push(createOreEntity(ax, ay, extrType, true));
+        if (Math.random() < 0.3) {
+          drops.push(createOreEntity(ax, ay, 'diamond', true));
+        }
+      } else {
+        // small
+        if (Math.random() < 0.7) {
+          drops.push(createOreEntity(ax, ay, 'crystal'));
+        }
+        if (Math.random() < 0.25) {
+          drops.push(createOreEntity(ax, ay, 'diamond', true));
+        }
       }
     }
 
@@ -1465,7 +1500,12 @@ export default function App() {
               let txt = `+1 Krystal`;
               let col = '#38bdf8';
 
-              if (asteroid.asteroidType === 'crystal') {
+              if (asteroid.asteroidType === 'gold-rush') {
+                oreType = Math.random() < 0.5 ? 'diamond' : 'obsidian';
+                amount = Math.random() < 0.5 ? 3 : 2;
+                txt = `+${amount} Zlatá Horečka: ${oreType === 'diamond' ? 'Diamanty' : 'Obsidiány'}!`;
+                col = '#eab308';
+              } else if (asteroid.asteroidType === 'crystal') {
                 oreType = 'crystal';
                 amount = Math.random() < 0.4 ? 4 : 2;
                 txt = `+${amount} Společné Krystaly`;
@@ -1512,7 +1552,7 @@ export default function App() {
                 // Destroy asteroid cleanly!
                 p.anchoredAsteroidId = undefined;
                 p.isDrilling = false;
-                triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size);
+                triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size, asteroid.asteroidType);
                 // Also award player some extra points/crystals
                 setCurrentScore(prev => prev + asteroid.points);
                 playExplosionSound(asteroid.size);
@@ -2054,31 +2094,41 @@ export default function App() {
         triggerOreSparkExplosion(ore.x, ore.y, ore.color);
 
         let awardLabel = `${pName}: +1 Krystal`;
+        let scoreAdded = 0;
 
         if (ore.type === 'crystal') {
           setRunCrystals(c => c + 1);
+          scoreAdded = 50;
           setStats(curr => {
             const nextStats = { ...curr, crystals: curr.crystals + 1 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Krystal`;
+          awardLabel = `${pName}: +1 Krystal (+50 skóre)`;
         } else if (ore.type === 'diamond') {
           setRunDiamonds(d => d + 1);
+          scoreAdded = 1000;
           setStats(curr => {
             const nextStats = { ...curr, diamonds: curr.diamonds + 1 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Diamant`;
+          awardLabel = `${pName}: +1 Diamant (+1000 skóre!)`;
         } else if (ore.type === 'obsidian') {
           setRunObsidian(o => o + 1);
+          scoreAdded = 3000;
           setStats(curr => {
             const nextStats = { ...curr, obsidian: curr.obsidian + 1 };
             saveStats(nextStats);
             return nextStats;
           });
-          awardLabel = `${pName}: +1 Obsidián`;
+          awardLabel = `${pName}: +1 Obsidián (+3000 skóre!)`;
+        }
+
+        if (scoreAdded > 0) {
+          const newScore = scoreRef.current + scoreAdded;
+          scoreRef.current = newScore;
+          setCurrentScore(newScore);
         }
 
         addGainNotification(awardLabel, ore.color);
@@ -2117,6 +2167,36 @@ export default function App() {
       asteroid.x += asteroid.vx;
       asteroid.y += asteroid.vy;
       asteroid.angle += asteroid.angularVelocity;
+
+      // Rain down with materials trailing in their wake!
+      const shedChance = asteroid.asteroidType === 'gold-rush' ? 0.012 : 0.0015;
+      if (Math.random() < shedChance) {
+        // Choose ore type based on asteroid type
+        let oType: OreType = 'crystal';
+        if (asteroid.asteroidType === 'gold-rush') {
+          oType = Math.random() < 0.6 ? 'diamond' : 'obsidian';
+        } else if (asteroid.asteroidType === 'crystal') {
+          oType = 'crystal';
+        } else if (asteroid.asteroidType === 'ice') {
+          oType = Math.random() < 0.35 ? 'diamond' : 'crystal';
+        } else if (asteroid.asteroidType === 'magma') {
+          oType = Math.random() < 0.35 ? 'obsidian' : 'crystal';
+        } else {
+          // common
+          oType = Math.random() < 0.1 ? 'diamond' : 'crystal';
+        }
+
+        // Spawn trailing slightly behind
+        const angleBehind = Math.atan2(asteroid.vy, asteroid.vx) + Math.PI + (Math.random() * 0.5 - 0.25);
+        const spawnX = asteroid.x + Math.cos(angleBehind) * (asteroid.radius + 15);
+        const spawnY = asteroid.y + Math.sin(angleBehind) * (asteroid.radius + 15);
+        
+        // Spawn with slight opposite momentum
+        const rawOre = createOreEntity(spawnX, spawnY, oType);
+        rawOre.vx = -asteroid.vx * 0.4 + (Math.random() * 0.6 - 0.3);
+        rawOre.vy = -asteroid.vy * 0.4 + (Math.random() * 0.6 - 0.3);
+        oresRef.current.push(rawOre);
+      }
 
       // Wrap around anchor location of the first alive player
       const anchorPlayer = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
@@ -2676,7 +2756,7 @@ export default function App() {
     });
 
     // 3. Drop ores exactly at destroyed core center coordinate
-    triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size);
+    triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size, asteroid.asteroidType);
 
     // Donkey Keeper Magma Chain Explosion (Řetězová exploze)
     if (asteroid.asteroidType === 'magma') {

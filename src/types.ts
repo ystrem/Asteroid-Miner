@@ -26,7 +26,7 @@ export interface Asteroid {
   vertices: Vector2D[];
   color: string;
   points: number;
-  asteroidType?: 'common' | 'magma' | 'ice' | 'crystal';
+  asteroidType?: 'common' | 'magma' | 'ice' | 'crystal' | 'gold-rush';
   tempState?: 'cold' | 'normal' | 'hot';
 }
 

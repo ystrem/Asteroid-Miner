@@ -52,6 +52,8 @@ export default function AsteroidExplorer({
   isOpen,
   onClose,
   asteroidType,
+  asteroidRadius,
+  asteroidColor,
   asteroidName
 }: AsteroidExplorerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -82,7 +84,7 @@ export default function AsteroidExplorer({
   const gamepadIndexRef = useRef<number | null>(null);
 
   // Entities refs
-  const asteroidBaseRadius = 130;
+  const asteroidBaseRadius = Math.max(130, asteroidRadius);
   const asteroidAngleRotation = useRef<number>(0);
   const mineralsRef = useRef<MineralNode[]>([]);
   const particlesRef = useRef<GravityParticle[]>([]);
@@ -209,7 +211,7 @@ export default function AsteroidExplorer({
 
   const handleLaunchComplete = () => {
     // Collect all bonuses and close
-    const finalScoreBonus = cargo.crystal * 100 + cargo.diamond * 250 + cargo.obsidian * 150 + 400;
+    const finalScoreBonus = cargo.crystal * 100 + cargo.diamond * 1000 + cargo.obsidian * 3000 + 400;
     playUpgradeSound();
     onClose(cargo.crystal, cargo.diamond, cargo.obsidian, finalScoreBonus);
   };
