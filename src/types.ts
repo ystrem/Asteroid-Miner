@@ -95,6 +95,7 @@ export interface Upgrades {
   abilitySockLevel: number;        // 0 to 3 (Smradlavá ponožka special attack)
   blackHoleActivator: number;      // 0 to 1 (0 = Not acquired, 1 = Acquired)
   miningDronesLevel: number;       // 0 to 3 (Automatic mining drones level)
+  omegaDestructorLevel: number;    // 0 to 1 (Super expensive ultimate upgrade)
 }
 
 export interface PlayerStats {
@@ -103,6 +104,7 @@ export interface PlayerStats {
   obsidian: number;
   highScore: number;
   totalAsteroidsMined: number;
+  prestigeCount?: number; // Number of times player completed New Game+ by discarding supplies
 }
 
 export interface Player {
@@ -193,5 +195,9 @@ export interface Boss {
   lastFired: number;
   lastShieldFired: number;
   lastValuableMove?: number;
+  lives?: number;
+  maxLives?: number;
+  healVisualTimer?: number;
+  hitCount?: number;
 }
 

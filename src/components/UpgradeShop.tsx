@@ -820,6 +820,78 @@ export default function UpgradeShop({
                   </div>
                 )}
               </div>
+
+              {/* SPECIAL PERSISTENT UPGRADE: OMEGA DESTRUCTOR */}
+              <div className="border border-red-900/60 rounded-xl p-4 bg-red-950/15 space-y-3 relative overflow-hidden mt-4">
+                <div className="absolute -right-6 -bottom-6 opacity-10 text-red-500 pointer-events-none">
+                  <Zap className="w-24 h-24" />
+                </div>
+                
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex gap-2.5 items-center">
+                    <div className="p-2 rounded-xl bg-red-900/30 border border-red-800/40">
+                      <Zap className="w-5 h-5 text-red-400 animate-pulse" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-red-200 text-base">Minecraft Omega Destruktor</h4>
+                      <span className="text-xs text-red-400 font-medium animate-pulse">
+                        {upgrades.omegaDestructorLevel === 1 ? '🔥 SUPERZBRAŇ AKTIVOVÁNA!' : 'Uživatelská superzbraň'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {upgrades.omegaDestructorLevel === 1 && (
+                    <span className="text-[10px] text-red-400 bg-red-950/40 px-2 py-1 border border-red-900/30 rounded-full font-bold uppercase tracking-wider">
+                      Aktivní
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed pl-1">
+                  Legenda mezi těžaři! Přetěžuje laserové systémy lodi. Vystřeluje 12 bleskově rotujících střel do všech směrů, které jsou zahalené v plamenech Minecraftu a spalují vše v cestě!
+                </p>
+
+                {upgrades.omegaDestructorLevel === 0 ? (
+                  <div className="bg-slate-950/70 border border-slate-900 rounded-xl p-3 space-y-2 mt-1">
+                    <div className="pt-1 flex flex-wrap gap-x-4 gap-y-2">
+                      <span className="text-xs font-semibold text-slate-400">Extrémní cena:</span>
+                      <div className="flex flex-wrap gap-2.5 text-xs">
+                        <div className={`flex items-center gap-1 ${stats.crystals >= 500 ? 'text-emerald-400 font-bold' : 'text-slate-500 line-through'}`}>
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                          <span>500 krystalů</span>
+                        </div>
+                        <div className={`flex items-center gap-1 ${stats.diamonds >= 150 ? 'text-blue-400 font-bold' : 'text-slate-500 line-through'}`}>
+                          <Gem className="w-3.5 h-3.5" />
+                          <span>150 diamantů</span>
+                        </div>
+                        <div className={`flex items-center gap-1 ${stats.obsidian >= 45 ? 'text-purple-400 font-bold' : 'text-slate-500 line-through'}`}>
+                          <Star className="w-3.5 h-3.5" />
+                          <span>45 obsidiánů</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        disabled={stats.crystals < 500 || stats.diamonds < 150 || stats.obsidian < 45 || hasPurchasedThisSession}
+                        onClick={() => handlePurchaseUpgrade('omegaDestructorLevel', { crystals: 500, diamonds: 150, obsidian: 45 }, 1)}
+                        className={`w-full py-2 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
+                          stats.crystals >= 500 && stats.diamonds >= 150 && stats.obsidian >= 45 && !hasPurchasedThisSession
+                            ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/15 hover:scale-[1.01]'
+                            : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                        }`}
+                        id="upgrade-btn-omega"
+                      >
+                        {hasPurchasedThisSession ? 'Zakoupeno v této návštěvě' : 'Zakoupit Omega Destruktor'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-red-950/20 border border-red-900/30 rounded-xl p-3 text-xs text-red-300 font-semibold leading-relaxed">
+                    Sytém dělostřelectva je přetaven fúzí! Veškeré lasery nyní vysílají doplňkové plamenné rotující střely. Omega Korzár nemá šanci!
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

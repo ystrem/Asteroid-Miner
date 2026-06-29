@@ -120,6 +120,8 @@ export default function App() {
   const [isBossFightActive, setIsBossFightActive] = useState<boolean>(false);
   const [showBossDefeatModal, setShowBossDefeatModal] = useState<boolean>(false);
   const [showBossVictoryModal, setShowBossVictoryModal] = useState<boolean>(false);
+  const [isDecisionOpen, setIsDecisionOpen] = useState<boolean>(false);
+  const isDecisionOpenRef = useRef<boolean>(false);
 
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -159,6 +161,7 @@ export default function App() {
 
   // Stable refs for values used inside the high-frequency physics game loop
   const upgradesRef = useRef<Upgrades>(upgrades);
+  const statsRef = useRef<PlayerStats>(stats);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const isShopOpenRef = useRef<boolean>(isShopOpen);
   const scoreRef = useRef<number>(0);
@@ -279,6 +282,10 @@ export default function App() {
   useEffect(() => {
     isShopOpenRef.current = isShopOpen;
   }, [isShopOpen]);
+
+  useEffect(() => {
+    statsRef.current = stats;
+  }, [stats]);
 
   useEffect(() => {
     gameModeRef.current = gameMode;
@@ -959,6 +966,10 @@ export default function App() {
         lastFired: 0,
         lastShieldFired: 0,
         lastValuableMove: Date.now() + 4000, // Trigger first valuable move 4s after start
+        lives: 6,
+        maxLives: 6,
+        healVisualTimer: 0,
+        hitCount: 0,
       };
 
       // Spawn 4 normal asteroids to act as protective cover or miner fields
@@ -975,6 +986,57 @@ export default function App() {
     // Launch game loop animations
     if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     animationFrameId.current = requestAnimationFrame(tickGameLoop);
+  };
+
+  // --- DAMAGE BOSS WITH HIT COUNT MECHANIC (Minecraft Style) ---
+  const damageBossWithHitCount = (hitX: number, hitY: number) => {
+    if (!bossRef.current) return;
+    const boss = bossRef.current;
+    
+    // Spark particles on impact showing armor deflection
+    for (let i = 0; i < 4; i++) {
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: hitX,
+        y: hitY,
+        vx: (Math.random() - 0.5) * 6,
+        vy: (Math.random() - 0.5) * 6,
+        color: '#fb923c', // Minecraft spark orange color
+        size: Math.random() * 2 + 1.2,
+        alpha: 0.9,
+        lifetime: 0,
+        maxLifetime: 20,
+      });
+    }
+
+    boss.hitCount = (boss.hitCount || 0) + 1;
+
+    if (boss.hitCount >= 10) {
+      boss.hitCount = 0;
+      // Take exactly 1mm of life! (1mm is ~6.6% or 1/15th of the health bar width of 180px)
+      const dmg = boss.maxHp * 0.066;
+      boss.hp -= dmg;
+
+      // Golden explosive ring showing armor shield cracked!
+      for (let i = 0; i < 30; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 8 + 3;
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: boss.x,
+          y: boss.y,
+          vx: Math.cos(ang) * speed,
+          vy: Math.sin(ang) * speed,
+          color: Math.random() < 0.5 ? '#facc15' : '#f97316', // gold/orange
+          size: Math.random() * 3.5 + 2,
+          alpha: 1.0,
+          lifetime: 0,
+          maxLifetime: 45,
+        });
+      }
+      playExplosionSound('medium');
+      addGainNotification("🛡️ ŠTÍT PRORAŽEN! (10 zásahů -> odebrán 1 mm života)", "#fb923c");
+    }
   };
 
   // --- DOCKING SHOP UPGRADE HANDLERS ---
@@ -1131,6 +1193,108 @@ export default function App() {
     }
   };
 
+  // --- SUPPLY DISCARD DECISION FOR NEW GAME PLUS ---
+  const handleWormholeDecision = (discard: boolean) => {
+    setIsDecisionOpen(false);
+    isDecisionOpenRef.current = false;
+
+    // Trigger "New Game Plus" / Prestige Reset of upgrades and return to normal mining world!
+    const cleanUpgrades = {
+      laserLevel: 1,
+      magnetLevel: 1,
+      hullLevel: 1,
+      shieldLevel: 0,
+      engineLevel: 1,
+      abilityLightningLevel: 0,
+      abilityPulseLevel: 0,
+      abilitySuperMagnetLevel: 0,
+      scoreMultiplierLevel: 1,
+      abilitySockLevel: 0,
+      blackHoleActivator: 0, // Consumed!
+      miningDronesLevel: 0,
+      omegaDestructorLevel: 0, // Consumed!
+    };
+
+    setUpgrades(cleanUpgrades);
+    saveUpgrades(cleanUpgrades);
+
+    // Reset current run score and asteroid field
+    scoreRef.current = 0;
+    setCurrentScore(0);
+    setRunCrystals(0);
+    setRunDiamonds(0);
+    setRunObsidian(0);
+
+    isBossFightActiveRef.current = false;
+    setIsBossFightActive(false);
+
+    // Reset player position and full health/shield
+    playersRef.current.forEach(p => {
+      p.x = 0;
+      p.y = 0;
+      p.vx = 0;
+      p.vy = 0;
+      p.hull = p.maxHull;
+      p.shield = p.maxShield;
+    });
+    setHull(100);
+    setShield(0);
+
+    // Spawn standard asteroid cloud
+    populateAsteroidBelt(15);
+
+    // Update permanent wallet stats
+    setStats(curr => {
+      let nextCrystals = curr.crystals;
+      let nextDiamonds = curr.diamonds;
+      let nextObsidian = curr.obsidian;
+      let nextPrestige = curr.prestigeCount || 0;
+
+      if (discard) {
+        nextCrystals = 0;
+        nextDiamonds = 0;
+        nextObsidian = 0;
+        nextPrestige += 1;
+        addGainNotification("🔥 ZÁSOBY BYLY OBĚTOVÁNY PRO OMEGA PRESTIŽ!", "#ef4444");
+        addGainNotification("✨ ZÍSKÁN TRVALÝ PRESTIŽNÍ BONUS: +15% k rychlosti lodi, magnetu a bodovému zisku za prestiž!", "#fbbf24");
+      } else {
+        addGainNotification("💎 PONECHAL SIS SVÉ ZÁSOBY PRO SNADNĚJŠÍ START!", "#60a5fa");
+      }
+
+      const nextStats = {
+        ...curr,
+        crystals: nextCrystals,
+        diamonds: nextDiamonds,
+        obsidian: nextObsidian,
+        prestigeCount: nextPrestige,
+      };
+      saveStats(nextStats);
+      return nextStats;
+    });
+
+    // Spark effects in a huge circle
+    for (let i = 0; i < 150; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 12 + 4;
+      particlesRef.current.push({
+        id: Math.random().toString(36).substring(2, 9),
+        x: 0,
+        y: 0,
+        vx: Math.cos(ang) * speed,
+        vy: Math.sin(ang) * speed,
+        color: discard ? '#ef4444' : '#3b82f6', // Red for sacrifice, blue for keep
+        size: Math.random() * 5 + 1.8,
+        alpha: 1.0,
+        lifetime: 0,
+        maxLifetime: 80
+      });
+    }
+
+    addGainNotification("🌀 HYPER-SKOK ZPĚT SE USPĚŠNĚ ZDAŘIL!", "#f97316");
+    addGainNotification("✨ NEW GAME+: Lodní motory přetíženy fázovým skokem. Musíš nakoupit vylepšení znova!", "#eab308");
+    playUpgradeSound();
+  };
+
   // --- ORE DROP GENERATOR (RADIAL EXPLOSIONS) ---
   const triggerSpawnAsteroidDrops = (ax: number, ay: number, size: AsteroidSize, type?: 'common' | 'magma' | 'ice' | 'crystal' | 'gold-rush') => {
     const drops: Ore[] = [];
@@ -1270,6 +1434,11 @@ export default function App() {
     if (lLevel === 5) cooldown = 180;
     if (lLevel === 6) cooldown = 260;
     if (lLevel >= 7) cooldown = 160;
+
+    // Omega Destruktor super fast fire rate!
+    if (upgradesRef.current.omegaDestructorLevel === 1) {
+      cooldown = 110;
+    }
 
     if (now - player.lastFired < cooldown) return;
     player.lastFired = now;
@@ -1502,13 +1671,43 @@ export default function App() {
         lasersRef.current.push(laser);
       });
     }
+
+    // --- OMEGA DESTRUCTOR ADDITIONAL FIRE BALLS ---
+    if (upgradesRef.current.omegaDestructorLevel === 1) {
+      // 12 rapid circular explosive lava pellets!
+      const burstCount = 12;
+      for (let i = 0; i < burstCount; i++) {
+        const theta = player.angle + (i * Math.PI * 2 / burstCount) + (Date.now() / 350); // rotating offset
+        const cosBurst = Math.cos(theta);
+        const sinBurst = Math.sin(theta);
+        
+        const extraLaser: Laser = {
+          id: Math.random().toString(36).substring(2, 9),
+          x: player.x + cosBurst * 25,
+          y: player.y + sinBurst * 25,
+          vx: cosBurst * 8.5,
+          vy: sinBurst * 8.5,
+          angle: theta,
+          damage: 5.0, // High damage
+          isPiercing: true, // pierces through multiple asteroids!
+          piercedAsteroidIds: [],
+          radius: 5,
+          width: 5,
+          color: Math.random() < 0.5 ? '#f97316' : '#ef4444', // Orange/red flame color
+          lifetime: 0,
+          maxLifetime: 95,
+          isHeated: true, // triggers trail and custom visuals
+        };
+        lasersRef.current.push(extraLaser);
+      }
+    }
   };
 
   // --- MAIN SIMULATION GAME TICK ENGINE ---
   const tickGameLoop = () => {
     if (!isPlayingRef.current) return;
 
-    if (isShopOpenRef.current || isExplorerOpenRef.current) {
+    if (isShopOpenRef.current || isExplorerOpenRef.current || isDecisionOpenRef.current) {
       // Game paused, draw static elements but skip physics updates
       updateEngineHum(false);
       drawGameScene();
@@ -1764,8 +1963,9 @@ export default function App() {
           }
         }
       } else if (p.hull > 0) {
-        const maxSpeed = 5 + (upgradesRef.current.engineLevel - 1) * 1.5;
-        const thrustPower = 0.14 + (upgradesRef.current.engineLevel - 1) * 0.07;
+        const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
+        const maxSpeed = (5 + (upgradesRef.current.engineLevel - 1) * 1.5) * prestigeBonusMultiplier;
+        const thrustPower = (0.14 + (upgradesRef.current.engineLevel - 1) * 0.07) * prestigeBonusMultiplier;
         const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
 
         if (p.thrusting) {
@@ -2080,6 +2280,52 @@ export default function App() {
         boss.x += Math.sin(Date.now() / 2500) * 1.5;
         boss.y += Math.cos(Date.now() / 1500) * 0.5;
 
+        // Minecraft style burning particles rising from the boss (on fire like in Minecraft!)
+        if (Math.random() < 0.40) {
+          const fAngle = Math.random() * Math.PI * 2;
+          const fDist = Math.random() * (boss.radius - 12);
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: boss.x + Math.cos(fAngle) * fDist,
+            y: boss.y + Math.sin(fAngle) * fDist,
+            vx: (Math.random() - 0.5) * 1.2,
+            vy: -Math.random() * 2.8 - 1.2, // rises upward like real flame
+            color: Math.random() < 0.4 ? '#f97316' : Math.random() < 0.75 ? '#ef4444' : '#fb923c', // Minecraft fire colors
+            size: Math.random() * 5.0 + 2.5, // pixelated squares
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 32,
+            isSquare: true, // Render as beautiful squares
+          });
+        }
+
+        // Boss self-healing logic: heals itself after being shot, no matter how we shoot it!
+        if (boss.hp < boss.maxHp) {
+          const currentLives = boss.lives ?? 6;
+          // Heal rate increases as boss lives decrease!
+          const healAmountPerSec = 250 + (6 - currentLives) * 180;
+          const healPerFrame = healAmountPerSec / 60;
+          boss.hp = Math.min(boss.maxHp, boss.hp + healPerFrame);
+
+          // Green healing nanite particle stream!
+          if (Math.random() < 0.20) {
+            const hAngle = Math.random() * Math.PI * 2;
+            const hDist = Math.random() * boss.radius;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: boss.x + Math.cos(hAngle) * hDist,
+              y: boss.y + Math.sin(hAngle) * hDist,
+              vx: (Math.random() - 0.5) * 1.8,
+              vy: (Math.random() - 0.5) * 1.8,
+              color: '#22c55e', // beautiful glowing emerald healing nanite color
+              size: Math.random() * 2.5 + 1.2,
+              alpha: 1.0,
+              lifetime: 0,
+              maxLifetime: 35
+            });
+          }
+        }
+
         // Rotate towards the closest player
         let closestP: Player | null = null;
         let closestDist = 999999;
@@ -2212,44 +2458,126 @@ export default function App() {
         }
       }
 
-      // Check if boss died
+      // Check if boss died or needs resurrection (has multiple lives)
       if (boss.hp <= 0) {
-        bossRef.current = null;
-        isBossFightActiveRef.current = false;
-        setIsBossFightActive(false);
+        const currentLives = boss.lives ?? 1;
+        if (currentLives > 1) {
+          // Resurrection / phase progression!
+          boss.lives = currentLives - 1;
+          boss.hp = boss.maxHp;
+          
+          // Sound effects
+          playExplosionSound('huge');
+          playUpgradeSound();
 
-        // Win rewards! Large crystals, diamonds, obsidian!
-        setStats(curr => {
-          const nextStats = {
-            ...curr,
-            crystals: curr.crystals + 50,
-            diamonds: curr.diamonds + 15,
-            obsidian: curr.obsidian + 5,
-          };
-          saveStats(nextStats);
-          return nextStats;
-        });
+          // Menacing alarm notifications
+          addGainNotification(`💥 GENERÁLŮV TRUP BYL ZNIČEN!`, "#ef4444");
+          addGainNotification(`⚠️ AKTIVOVÁNO SEBE-UZDRAVENÍ! (Zbývá životů: ${boss.lives}/${boss.maxLives})`, "#22c55e");
+          addGainNotification(`Generál se stává agresivnějším!`, "#eab308");
 
-        // Trigger big explosion and victory modal!
-        triggerComboSteamCloud(boss.x, boss.y);
-        for (let i = 0; i < 60; i++) {
-          const angle = Math.random() * Math.PI * 2;
-          const speed = Math.random() * 8 + 2;
-          particlesRef.current.push({
-            id: Math.random().toString(36).substring(2, 9),
+          // Reward the player with half of the final reward for surviving this phase!
+          setStats(curr => {
+            const nextStats = {
+              ...curr,
+              crystals: curr.crystals + 30,
+              diamonds: curr.diamonds + 10,
+              obsidian: curr.obsidian + 3,
+            };
+            saveStats(nextStats);
+            return nextStats;
+          });
+          setRunCrystals(c => c + 30);
+          setRunDiamonds(d => d + 10);
+          setRunObsidian(o => o + 3);
+
+          // Force spawn useful drops directly at the core - gold rush style!
+          triggerSpawnAsteroidDrops(boss.x, boss.y, 'huge', 'gold-rush');
+
+          // Release a defensive radial EMP shockwave (pushes away players, clears local bullets)
+          pirateLasersRef.current = []; // Clear current bullets to avoid cheap hits
+          
+          playersRef.current.forEach(p => {
+            if (p.hull > 0) {
+              const dx = p.x - boss.x;
+              const dy = p.y - boss.y;
+              const dist = Math.hypot(dx, dy);
+              if (dist < 450) {
+                const pushAngle = Math.atan2(dy, dx);
+                p.vx += Math.cos(pushAngle) * 16;
+                p.vy += Math.sin(pushAngle) * 16;
+                p.invulnerableTime = 70; // short buffer
+              }
+            }
+          });
+
+          // Giant phase-shift particle circle
+          for (let i = 0; i < 90; i++) {
+            const ang = (i * Math.PI * 2) / 90;
+            const spd = Math.random() * 12 + 4;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: boss.x,
+              y: boss.y,
+              vx: Math.cos(ang) * spd,
+              vy: Math.sin(ang) * spd,
+              color: '#22c55e', // Emerald nanite shielding burst
+              size: Math.random() * 6 + 2.5,
+              alpha: 1.0,
+              lifetime: 0,
+              maxLifetime: 60,
+            });
+          }
+        } else {
+          // Absolute death! Defeated for good.
+          bossRef.current = null;
+
+          // Win rewards! Large crystals, diamonds, obsidian!
+          setStats(curr => {
+            const nextStats = {
+              ...curr,
+              crystals: curr.crystals + 150,
+              diamonds: curr.diamonds + 40,
+              obsidian: curr.obsidian + 15,
+            };
+            saveStats(nextStats);
+            return nextStats;
+          });
+
+          // Spawn the Orange Return Portal right where the boss died!
+          wormholeRef.current = {
             x: boss.x,
             y: boss.y,
-            vx: Math.cos(angle) * speed,
-            vy: Math.sin(angle) * speed,
-            color: Math.random() < 0.5 ? '#facc15' : '#ef4444',
-            size: Math.random() * 8 + 3,
-            alpha: 1.0,
-            lifetime: 0,
-            maxLifetime: 60 + Math.floor(Math.random() * 60)
-          });
+            radius: 80,
+            angle: 0,
+            pulseScale: 1.0,
+            soundPlayed: false,
+            isReturn: true, // Return portal flag
+          };
+
+          // Trigger massive screen-clearing explosion
+          triggerComboSteamCloud(boss.x, boss.y);
+          for (let i = 0; i < 150; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 14 + 3;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: boss.x,
+              y: boss.y,
+              vx: Math.cos(angle) * speed,
+              vy: Math.sin(angle) * speed,
+              color: Math.random() < 0.5 ? '#facc15' : '#ef4444',
+              size: Math.random() * 9 + 3,
+              alpha: 1.0,
+              lifetime: 0,
+              maxLifetime: 95,
+            });
+          }
+          playExplosionSound('colossal');
+
+          addGainNotification("🏆 OMEGA KORZÁR BYL PORAŽEN!", "#22c55e");
+          addGainNotification("🌀 OTEVŘEL SE PORTÁL ZPĚT PRO NÁVRAT!", "#f97316");
+          addGainNotification("Vleť do oranžového portálu pro návrat do těžebního sektoru!", "#eab308");
         }
-        playExplosionSound('colossal');
-        setShowBossVictoryModal(true);
       }
     }
 
@@ -2441,6 +2769,22 @@ export default function App() {
       laser.x += laser.vx;
       laser.y += laser.vy;
       laser.lifetime++;
+
+      // Minecraft style burning particles trail
+      if (laser.isHeated) {
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: laser.x - laser.vx * 0.4 + (Math.random() - 0.5) * 4,
+          y: laser.y - laser.vy * 0.4 + (Math.random() - 0.5) * 4,
+          vx: (Math.random() - 0.5) * 1.5,
+          vy: (Math.random() - 0.5) * 1.5,
+          color: Math.random() < 0.6 ? '#f97316' : '#ef4444', // Orange/red flickering flame
+          size: Math.random() * 3.5 + 2,
+          alpha: 1.0,
+          lifetime: 0,
+          maxLifetime: 15,
+        });
+      }
       return laser;
     }).filter(laser => laser.lifetime < laser.maxLifetime);
 
@@ -2452,6 +2796,11 @@ export default function App() {
     else if (upgradesRef.current.magnetLevel === 4) { magnetRadius = 340; magnetPullStrength = 0.44; }
     else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; }
     else if (upgradesRef.current.magnetLevel >= 6) { magnetRadius = 8000; magnetPullStrength = 1.95; }
+
+    // Apply prestige bonus multiplier
+    const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
+    magnetRadius *= prestigeBonusMultiplier;
+    magnetPullStrength *= prestigeBonusMultiplier;
 
     // Donkey Keeper Super Magnet active capability overwrite
     if (superMagnetActiveRef.current > 0) {
@@ -2562,7 +2911,12 @@ export default function App() {
         }
 
         if (scoreAdded > 0) {
-          const newScore = scoreRef.current + scoreAdded;
+          const prestigeMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
+          const finalScoreAdded = Math.round(scoreAdded * prestigeMultiplier);
+          if (statsRef.current.prestigeCount && statsRef.current.prestigeCount > 0) {
+            awardLabel = awardLabel.replace(`+${scoreAdded} skóre`, `+${finalScoreAdded} skóre`);
+          }
+          const newScore = scoreRef.current + finalScoreAdded;
           scoreRef.current = newScore;
           setCurrentScore(newScore);
         }
@@ -2798,7 +3152,7 @@ export default function App() {
           const dy = sock.y - boss.y;
           const dist = Math.hypot(dx, dy);
           if (dist < sock.radius + boss.radius) {
-            boss.hp -= sock.damage;
+            damageBossWithHitCount(sock.x, sock.y);
             triggerBurst = true;
           }
         }
@@ -2893,7 +3247,10 @@ export default function App() {
           const dy = boss.y - sock.y;
           const dist = Math.hypot(dx, dy);
           if (dist < sock.cloudRadius) {
-            boss.hp -= sock.cloudDmgPerFrame;
+            // Count 10% of cloud DOT frames as armor hits
+            if (Math.random() < 0.10) {
+              damageBossWithHitCount(boss.x + (Math.random() - 0.5) * 40, boss.y + (Math.random() - 0.5) * 40);
+            }
             boss.vx *= 0.96;
             boss.vy *= 0.96;
           }
@@ -3209,7 +3566,7 @@ export default function App() {
         const hitRad = laser.radius + boss.radius;
 
         if (distSq < hitRad * hitRad) {
-          boss.hp -= laser.damage;
+          damageBossWithHitCount(laser.x, laser.y);
           
           if (!laser.isPiercing) {
             laser.lifetime = laser.maxLifetime; // destroy standard laser on impact
@@ -3237,7 +3594,28 @@ export default function App() {
     }
 
     // --- COSMIC WORMHOLE UPDATE & PROGRESSION ---
-    if (!isBossFightActiveRef.current && scoreRef.current >= 8000) {
+    if (wormholeRef.current && wormholeRef.current.isReturn) {
+      const wormhole = wormholeRef.current;
+      wormhole.angle += 0.02; // Rotate
+      wormhole.pulseScale = 1.0 + Math.sin(Date.now() / 150) * 0.07;
+
+      // Check if any player enters the return wormhole
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const dx = p.x - wormhole.x;
+          const dy = p.y - wormhole.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist < 65) {
+            // Open the interactive supply decision modal!
+            wormholeRef.current = null;
+            setIsDecisionOpen(true);
+            isDecisionOpenRef.current = true;
+            playUpgradeSound();
+          }
+        }
+      });
+    } else if (!isBossFightActiveRef.current && scoreRef.current >= 8000) {
       const livingPlayer = playersRef.current.find(p => p.hull > 0) || playersRef.current[0];
       if (livingPlayer) {
         if (!wormholeRef.current) {
@@ -3299,6 +3677,10 @@ export default function App() {
                   lastFired: 0,
                   lastShieldFired: 0,
                   lastValuableMove: Date.now() + 4000, // Trigger first valuable move 4s after start
+                  lives: 6,
+                  maxLives: 6,
+                  healVisualTimer: 0,
+                  hitCount: 0,
                 };
 
                 // Big teleportation spark cloud
@@ -3981,13 +4363,18 @@ export default function App() {
 
         ctx.save();
         ctx.globalAlpha = p.alpha;
-        ctx.beginPath();
-        ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
-        
         ctx.shadowBlur = p.size * 2;
         ctx.shadowColor = p.color;
-        ctx.fill();
+        
+        if (p.isSquare) {
+          // Render pixelated Minecraft square
+          ctx.fillRect(sx - p.size, sy - p.size, p.size * 2, p.size * 2);
+        } else {
+          ctx.beginPath();
+          ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       });
 
@@ -4402,7 +4789,7 @@ export default function App() {
       });
 
       // --- DRAW COSMIC WORMHOLE ---
-      if (!isBossFightActiveRef.current && wormholeRef.current) {
+      if (wormholeRef.current) {
         const wormhole = wormholeRef.current;
         const wx = wormhole.x - camX;
         const wy = wormhole.y - camY;
@@ -4414,21 +4801,28 @@ export default function App() {
         const r = wormhole.radius * wormhole.pulseScale;
 
         // Draw background gravitational distortion rings
+        const ringColor = wormhole.isReturn ? 'rgba(249, 115, 22, ' : 'rgba(168, 85, 247, ';
         for (let i = 4; i > 0; i--) {
           const alpha = 0.08 * i;
-          ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
+          ctx.strokeStyle = `${ringColor}${alpha})`;
           ctx.lineWidth = 4;
           ctx.beginPath();
           ctx.arc(0, 0, r * (1 + i * 0.25), 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Draw glowing neon outer purple vortex
+        // Draw glowing neon outer purple/orange vortex
         const grad = ctx.createRadialGradient(0, 0, r * 0.1, 0, 0, r);
         grad.addColorStop(0, '#020617'); // dark black center
-        grad.addColorStop(0.35, '#581c87'); // deep purple swirl
-        grad.addColorStop(0.7, '#a855f7'); // neon purple edge
-        grad.addColorStop(0.9, '#22d3ee'); // cyan rim sparks
+        if (wormhole.isReturn) {
+          grad.addColorStop(0.35, '#7c2d12'); // deep orange swirl
+          grad.addColorStop(0.7, '#f97316'); // neon orange edge
+          grad.addColorStop(0.9, '#facc15'); // gold rim sparks
+        } else {
+          grad.addColorStop(0.35, '#581c87'); // deep purple swirl
+          grad.addColorStop(0.7, '#a855f7'); // neon purple edge
+          grad.addColorStop(0.9, '#22d3ee'); // cyan rim sparks
+        }
         grad.addColorStop(1, 'rgba(34, 211, 238, 0)');
 
         ctx.fillStyle = grad;
@@ -4437,7 +4831,7 @@ export default function App() {
         ctx.fill();
 
         // Draw swirling spiral lines inside the vortex for dramatic detail!
-        ctx.strokeStyle = 'rgba(192, 132, 252, 0.45)';
+        ctx.strokeStyle = wormhole.isReturn ? 'rgba(253, 186, 116, 0.45)' : 'rgba(192, 132, 252, 0.45)';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
         for (let j = 0; j < 3; j++) {
@@ -4565,8 +4959,8 @@ export default function App() {
         ctx.rotate(-(boss.angle + Math.PI / 2));
 
         // Draw Boss HP HUD directly on canvas
-        const barWidth = 160;
-        const barHeight = 8;
+        const barWidth = 180;
+        const barHeight = 9;
         ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
         ctx.fillRect(-barWidth / 2, -125, barWidth, barHeight);
         
@@ -4579,12 +4973,26 @@ export default function App() {
         ctx.lineWidth = 1.0;
         ctx.strokeRect(-barWidth / 2, -125, barWidth, barHeight);
 
+        // Draw Remaining Lives as glowing burning fire symbols! (On fire like in Minecraft!)
+        const bLives = boss.lives ?? 6;
+        const bMaxLives = boss.maxLives ?? 6;
+        let heartsStr = "";
+        for (let i = 0; i < bMaxLives; i++) {
+          heartsStr += i < bLives ? "🔥" : "🖤";
+        }
+
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px "Space Grotesk", sans-serif';
         ctx.textAlign = 'center';
         ctx.shadowBlur = 5;
         ctx.shadowColor = '#000000';
-        ctx.fillText(`👑 GENERAL CORSAIR (${Math.round(hpRatio * 100)}%)`, 0, -135);
+        ctx.fillText(`👑 GENERÁL KORZÁRŮ (${Math.round(hpRatio * 100)}%)`, 0, -137);
+        
+        // Draw lives and regeneration stat underneath
+        ctx.fillStyle = '#ff7849'; // fiery color
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        const healAmt = hpRatio < 1.0 ? 250 + (6 - bLives) * 180 : 0;
+        ctx.fillText(`${heartsStr}  |  🔥 REGEN: +${healAmt} HP/s`, 0, -112);
 
         ctx.restore();
       }
@@ -5090,6 +5498,20 @@ export default function App() {
                   <span className="text-sm font-extrabold text-slate-100 font-mono mt-0.5">{stats.obsidian}</span>
                 </div>
               </div>
+
+              {/* Prestige NG+ badge if active */}
+              {stats.prestigeCount && stats.prestigeCount > 0 ? (
+                <>
+                  <div className="w-[1px] h-6 bg-slate-800 shadow-inner mx-1 self-center" />
+                  <div className="flex items-center gap-1.5" title={`Prestiž Úroveň ${stats.prestigeCount} (Trvalý bonus +${stats.prestigeCount * 15}% k rychlosti lodi, magnetickému přitahování a bodům)`}>
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-amber-400 font-bold leading-none uppercase tracking-wider">Prestiž</span>
+                      <span className="text-xs font-black text-amber-300 font-mono mt-0.5">NG+{stats.prestigeCount}</span>
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
 
             {/* Live Score block */}
@@ -5859,6 +6281,108 @@ export default function App() {
             >
               Slavit Vítězství!
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- REZISTENCE PORTÁLU: VOLBA O ZÁSOBÁCH --- */}
+      {isDecisionOpen && (
+        <div className="absolute inset-0 z-40 bg-black/95 backdrop-blur-lg flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-slate-950 border border-amber-500 rounded-3xl shadow-[0_0_80px_rgba(245,158,11,0.2)] p-8 text-center space-y-6 text-slate-100 animate-fade-in">
+            <div className="space-y-2">
+              <div className="w-16 h-16 bg-amber-950/40 border border-amber-500 rounded-full flex items-center justify-center mx-auto text-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.3)] animate-pulse">
+                <Sparkles className="w-8 h-8" />
+              </div>
+              <h2 className="text-3xl font-black text-amber-400 tracking-tight uppercase">
+                ROZHODNUTÍ O ZÁSOBÁCH
+              </h2>
+              <p className="text-xs text-slate-400 font-mono tracking-widest uppercase">Fázový hyper-skok zpět do těžebního sektoru</p>
+            </div>
+
+            <p className="text-sm text-slate-300 max-w-lg mx-auto leading-relaxed">
+              Průlet fúzním portálem vyvolává obrovskou gravitační zátěž. Musíte se rozhodnout, zda odhodíte dříve získané zásoby surových rud z nákladového prostoru za účelem přetížení pohonů, nebo se pokusíte zásoby pronést za cenu nulového energetického zisku.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 text-left">
+              {/* SACRIFICE/DISCARD OPTION */}
+              <button
+                onClick={() => handleWormholeDecision(true)}
+                className="group relative flex flex-col justify-between p-6 bg-slate-900 hover:bg-slate-900/80 border border-red-500/30 hover:border-red-500 rounded-2xl transition-all duration-300 shadow-md hover:shadow-[0_0_30px_rgba(239,68,68,0.2)] cursor-pointer text-left"
+                id="portal-decision-discard-btn"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="px-3 py-1 text-[10px] font-bold text-red-400 bg-red-950/40 border border-red-500/20 rounded-full font-mono uppercase tracking-wider">Oběť zásob</span>
+                    <Zap className="w-5 h-5 text-red-500 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <h3 className="text-lg font-extrabold text-red-400 tracking-tight">Zahodit nashromážděné zásoby</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Smaže krystaly, diamanty i obsidián ve vašem permanentním skladu na nulu. Lodní generátor absorbací těchto surovin vyvolá <b>PRESTIŽNÍ NEW GAME+</b> efekt.
+                  </p>
+                </div>
+                <div className="w-full h-[1px] bg-slate-800 my-4" />
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Trvalý bonus pro tuto a všechny příští hry:</span>
+                  <div className="text-amber-400 font-mono text-xs font-bold space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-emerald-500 font-bold">✓</span> +15 % k rychlosti a zrychlení lodi
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-emerald-500 font-bold">✓</span> +15 % k dosahu a síle magnetu rud
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-emerald-500 font-bold">✓</span> +15 % k zisku skóre (Trvalý multiplikátor)
+                    </div>
+                    <div className="flex items-center gap-1.5 text-red-400 font-bold">
+                      <span className="text-red-500 font-black">⚠</span> Suroviny v peněžence klesnou na 0!
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 w-full py-2 px-4 rounded-xl bg-red-600 group-hover:bg-red-500 text-white font-black uppercase text-[10px] tracking-widest text-center transition-colors">
+                  ROZHODNOUT SE PRO PRESTIŽ 🔥
+                </div>
+              </button>
+
+              {/* KEEP OPTION */}
+              <button
+                onClick={() => handleWormholeDecision(false)}
+                className="group relative flex flex-col justify-between p-6 bg-slate-900 hover:bg-slate-900/80 border border-blue-500/30 hover:border-blue-500 rounded-2xl transition-all duration-300 shadow-md hover:shadow-[0_0_30px_rgba(59,130,246,0.2)] cursor-pointer text-left"
+                id="portal-decision-keep-btn"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="px-3 py-1 text-[10px] font-bold text-blue-400 bg-blue-950/40 border border-blue-500/20 rounded-full font-mono uppercase tracking-wider">Konzervativní start</span>
+                    <Gem className="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <h3 className="text-lg font-extrabold text-blue-400 tracking-tight">Ponechat si nashromážděné zásoby</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Uchováte si všechny své krystaly, diamanty i obsidián. Budete mít možnost v novém cyklu okamžitě nakoupit základní upgrady v doku pro snazší začátek.
+                  </p>
+                </div>
+                <div className="w-full h-[1px] bg-slate-800 my-4" />
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Vliv na herní průběh:</span>
+                  <div className="text-blue-300 font-mono text-xs space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-blue-400 font-bold">✓</span> Zachováte si stávající stav peněženky
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-blue-400 font-bold">✓</span> Ždný risk ztráty surovin
+                    </div>
+                    <div className="flex items-center gap-1.5 text-slate-400">
+                      <span className="text-red-500 font-bold">✗</span> Nezískáte prestižní bonus k atributům lodi
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 w-full py-2 px-4 rounded-xl bg-blue-600 group-hover:bg-blue-500 text-white font-black uppercase text-[10px] tracking-widest text-center transition-colors">
+                  PONECHAT SI SUROVINY 💎
+                </div>
+              </button>
+            </div>
+
+            <p className="text-[10px] text-slate-500 italic pt-2">
+              Poznámka: Obě volby vynulují zakoupená loďní vylepšení a skóre aktuální jízdy z důvodu fázového resetu motorů při průletu červí dírou.
+            </p>
           </div>
         </div>
       )}

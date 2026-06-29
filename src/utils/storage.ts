@@ -21,6 +21,7 @@ const DEFAULT_UPGRADES: Upgrades = {
   abilitySockLevel: 0,
   blackHoleActivator: 0,
   miningDronesLevel: 0,
+  omegaDestructorLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {
@@ -29,6 +30,7 @@ const DEFAULT_STATS: PlayerStats = {
   obsidian: 0,
   highScore: 0,
   totalAsteroidsMined: 0,
+  prestigeCount: 0,
 };
 
 export function loadUpgrades(): Upgrades {
