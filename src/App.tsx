@@ -195,12 +195,37 @@ export default function App() {
   const [superMagnetActive, setSuperMagnetActive] = useState<number>(0);
   const [sockCooldown, setSockCooldown] = useState<number>(0);
 
+  // Active Map / Sector State
+  const [selectedMap, setSelectedMap] = useState<string>('silicon');
+  const selectedMapRef = useRef<string>('silicon');
+
   // Boss Fight State
   const [isBossFightActive, setIsBossFightActive] = useState<boolean>(false);
+  const [bossHp, setBossHp] = useState<number>(1000);
+  const [bossMaxHp, setBossMaxHp] = useState<number>(1000);
+  const [bossLives, setBossLives] = useState<number>(6);
+  const [bossMaxLives, setBossMaxLives] = useState<number>(6);
   const [showBossDefeatModal, setShowBossDefeatModal] = useState<boolean>(false);
   const [showBossVictoryModal, setShowBossVictoryModal] = useState<boolean>(false);
   const [isDecisionOpen, setIsDecisionOpen] = useState<boolean>(false);
   const isDecisionOpenRef = useRef<boolean>(false);
+
+  // Combat Log and Combo Multiplier State & Refs
+  const [combatLog, setCombatLog] = useState<{ id: string; text: string; timestamp: number; color: string }[]>([]);
+  const [comboMultiplier, setComboMultiplier] = useState<number>(1);
+  const comboMultiplierRef = useRef<number>(1);
+  const lastAsteroidDestroyedTimeRef = useRef<number>(0);
+
+  const addCombatLogMessage = (text: string, color: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setCombatLog(prev => {
+      const updated = [...prev, { id, text, timestamp: Date.now(), color }];
+      if (updated.length > 6) {
+        return updated.slice(-6);
+      }
+      return updated;
+    });
+  };
 
   // --- REFS FOR PHYSICS GAME LOOP (Buttery 60fps) ---
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -822,14 +847,58 @@ export default function App() {
 
     if (!forcedType) {
       const typeRoll = Math.random();
-      if (typeRoll < 0.12) {
-        asteroidType = 'gold-rush'; // 12% rare gold-rush!
-      } else if (typeRoll < 0.26) {
-        asteroidType = 'magma';
-      } else if (typeRoll < 0.40) {
-        asteroidType = 'ice';
-      } else if (typeRoll < 0.52) {
-        asteroidType = 'crystal';
+      const activeMap = selectedMapRef.current;
+      
+      if (activeMap === 'magma') {
+        // Magma Nebula: high chance of Magma asteroids
+        if (typeRoll < 0.60) {
+          asteroidType = 'magma';
+        } else if (typeRoll < 0.70) {
+          asteroidType = 'crystal';
+        } else if (typeRoll < 0.80) {
+          asteroidType = 'ice';
+        } else if (typeRoll < 0.88) {
+          asteroidType = 'gold-rush';
+        } else {
+          asteroidType = 'common';
+        }
+      } else if (activeMap === 'ice') {
+        // Ice Ring: high chance of Ice asteroids
+        if (typeRoll < 0.60) {
+          asteroidType = 'ice';
+        } else if (typeRoll < 0.70) {
+          asteroidType = 'crystal';
+        } else if (typeRoll < 0.80) {
+          asteroidType = 'magma';
+        } else if (typeRoll < 0.88) {
+          asteroidType = 'gold-rush';
+        } else {
+          asteroidType = 'common';
+        }
+      } else if (activeMap === 'gold') {
+        // Gold Nucleus: high chance of Gold-rush asteroids and crystals
+        if (typeRoll < 0.45) {
+          asteroidType = 'gold-rush';
+        } else if (typeRoll < 0.65) {
+          asteroidType = 'crystal';
+        } else if (typeRoll < 0.80) {
+          asteroidType = 'magma';
+        } else if (typeRoll < 0.90) {
+          asteroidType = 'ice';
+        } else {
+          asteroidType = 'common';
+        }
+      } else {
+        // Silicon Belt (standard/common)
+        if (typeRoll < 0.12) {
+          asteroidType = 'gold-rush';
+        } else if (typeRoll < 0.26) {
+          asteroidType = 'magma';
+        } else if (typeRoll < 0.40) {
+          asteroidType = 'ice';
+        } else if (typeRoll < 0.52) {
+          asteroidType = 'crystal';
+        }
       }
     }
 
@@ -884,6 +953,7 @@ export default function App() {
 
   // --- LAUNCH GAME RUN ---
   const handleStartGame = (startBossFight: boolean = false) => {
+    selectedMapRef.current = selectedMap;
     // Lazily spin up our AudioContext via user trigger gesture
     playLaserSound(1);
 
@@ -1032,10 +1102,11 @@ export default function App() {
       setIsShopOpen(true);
       isShopOpenRef.current = true;
       
-      let bossMaxHp = 6000; // Medium difficulty
-      if (difficultyRef.current === 'easy') bossMaxHp = 3000;
-      else if (difficultyRef.current === 'hard') bossMaxHp = 10000;
-      else if (difficultyRef.current === 'nightmare') bossMaxHp = 16000;
+      let bossMaxHp = 1000; // Exact 1000 HP as requested ("tisíc životů")
+      setBossHp(1000);
+      setBossMaxHp(1000);
+      setBossLives(6);
+      setBossMaxLives(6);
 
       bossRef.current = {
         x: 0,
@@ -1799,6 +1870,17 @@ export default function App() {
       return;
     }
 
+    // Decay combo multiplier if expired or update state to animate the timer bar
+    const timeNow = Date.now();
+    if (comboMultiplierRef.current > 1) {
+      if (timeNow - lastAsteroidDestroyedTimeRef.current >= 4000) {
+        comboMultiplierRef.current = 1;
+        setComboMultiplier(1);
+      } else {
+        setComboMultiplier(comboMultiplierRef.current);
+      }
+    }
+
     const canvas = canvasRef.current;
     const width = canvas ? canvas.width : window.innerWidth;
     const height = canvas ? canvas.height : window.innerHeight;
@@ -2105,6 +2187,26 @@ export default function App() {
 
         p.vx *= inertiaFriction;
         p.vy *= inertiaFriction;
+
+        // Persistent but fading thruster trail particles behind each player ship that reflect their unique color
+        const trailSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+        if (trailSpeed > 0.2 && Math.random() < 0.6) {
+          const trailAngle = p.angle + Math.PI + (Math.random() * 0.2 - 0.1);
+          const tx = p.x - Math.cos(p.angle) * 14;
+          const ty = p.y - Math.sin(p.angle) * 14;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: tx,
+            y: ty,
+            vx: -p.vx * 0.1 + Math.cos(trailAngle) * 0.5,
+            vy: -p.vy * 0.1 + Math.sin(trailAngle) * 0.5,
+            color: p.color,
+            size: Math.random() * 2.2 + 1.2,
+            alpha: 0.85,
+            lifetime: 0,
+            maxLifetime: 35 + Math.floor(Math.random() * 25),
+          });
+        }
       } else {
         // Slow down wreckage slow-drift
         p.vx *= 0.96;
@@ -2297,10 +2399,12 @@ export default function App() {
                 if (p.shield > 0) {
                   p.shield = Math.max(0, p.shield - stormDmgShield);
                   addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA ŠTÍT! (-${stormDmgShield} HP)`, '#fb923c');
+                  addCombatLogMessage(`⚠️ ${p.name}: Radiace poškodila štít -${stormDmgShield}`, '#fb923c');
                   playDamageSound();
                 } else {
                   p.hull = Math.max(0, p.hull - stormDmgHull);
                   addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA TRUP! (-${stormDmgHull} HP)`, '#ef4444');
+                  addCombatLogMessage(`🚨 ${p.name}: Radiace poškodila trup -${stormDmgHull}`, '#ef4444');
                   playDamageSound();
                   
                   if (p.hull <= 0) {
@@ -2681,6 +2785,14 @@ export default function App() {
           addGainNotification("Vleť do oranžového portálu pro návrat do těžebního sektoru!", "#eab308");
         }
       }
+      
+      // Synchronize boss values to React state for top HP bar overlay
+      if (bossRef.current) {
+        setBossHp(bossRef.current.hp);
+        setBossMaxHp(bossRef.current.maxHp);
+        setBossLives(bossRef.current.lives ?? 1);
+        setBossMaxLives(bossRef.current.maxLives ?? 6);
+      }
     }
 
     // Update Cosmic Pirates behaviour
@@ -2782,11 +2894,14 @@ export default function App() {
             if (p.shield > 0) {
               p.shield = Math.max(0, p.shield - pirateDmgShield);
               addGainNotification(`💥 ${p.name} - ABSORBOVÁN ZÁSAH ŠTÍTEM! (-${pirateDmgShield} HP)`, '#fb923c');
+              addCombatLogMessage(`💥 ${p.name}: Korzár laser zasáhl štít -${pirateDmgShield}`, '#38bdf8');
             } else {
               p.hull = Math.max(0, p.hull - pirateDmgHull);
               addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN KORZÁREM! (-${pirateDmgHull} HP)`, '#ef4444');
+              addCombatLogMessage(`🚨 ${p.name}: Korzár laser zasáhl trup -${pirateDmgHull}`, '#ef4444');
               if (p.hull <= 0) {
                 addGainNotification(`💀 ${p.name} ZNIČEN PIRÁTY!`, '#ef4444');
+                addCombatLogMessage(`💀 Hlášení: ${p.name} byl zničen korzáry!`, '#ef4444');
                 triggerShipCatastrophicFailure();
               }
             }
@@ -3618,10 +3733,12 @@ export default function App() {
                 p.shield -= calculatedDmg;
                 finalDmgToHull = 0;
                 addGainNotification(`${p.name}: ŠTÍT ABS. -${calculatedDmg} HP`, '#38bdf8');
+                addCombatLogMessage(`🛡️ ${p.name}: Štít pohltil náraz -${calculatedDmg} HP`, '#38bdf8');
               } else {
                 finalDmgToHull = calculatedDmg - p.shield;
                 p.shield = 0;
                 addGainNotification(`${p.name}: ŠTÍT ZNIČEN!`, '#ef4444');
+                addCombatLogMessage(`💥 ${p.name}: Štít se přetížil nárazem! Trup poškozen -${finalDmgToHull} HP`, '#ef4444');
                 playShieldDownSound();
               }
             }
@@ -3629,14 +3746,17 @@ export default function App() {
             if (finalDmgToHull > 0) {
               p.hull = Math.max(0, p.hull - finalDmgToHull);
               addGainNotification(`${p.name}: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
+              addCombatLogMessage(`💥 ${p.name}: Kinetická kolize s asteroidem -${finalDmgToHull} HP`, '#f97316');
 
               if (p.hull <= 0) {
                 // Check if any other player is still alive
                 const anyoneAlive = playersRef.current.some(pl => pl.hull > 0);
                 if (!anyoneAlive) {
+                   addCombatLogMessage(`☠️ Hlášení: Všechny lodě byly zničeny!`, '#ef4444');
                    triggerShipCatastrophicFailure();
                 } else {
                    addGainNotification(`HLÁŠENÍ: ${p.name} byl ZNIČEN! Braňte pozice!`, '#ef4444');
+                   addCombatLogMessage(`💀 Hlášení: ${p.name} byl zničen v kolizi!`, '#ef4444');
                 }
               }
             }
@@ -3764,10 +3884,11 @@ export default function App() {
                 // Spawn protective asteroid coverage
                 populateAsteroidBelt(4);
 
-                let bossMaxHp = 6000; // Medium difficulty
-                if (difficultyRef.current === 'easy') bossMaxHp = 3000;
-                else if (difficultyRef.current === 'hard') bossMaxHp = 10000;
-                else if (difficultyRef.current === 'nightmare') bossMaxHp = 16000;
+                let bossMaxHp = 1000; // Exact 1000 HP as requested ("tisíc životů")
+                setBossHp(1000);
+                setBossMaxHp(1000);
+                setBossLives(6);
+                setBossMaxLives(6);
 
                 // Move boss in front of player
                 bossRef.current = {
@@ -4230,12 +4351,27 @@ export default function App() {
     playExplosionSound(asteroid.size);
     triggerAsteroidPieceExplosionParticles(asteroid);
 
-    // 1. Add score
+    // 1. Add score with combo multiplier
+    const now = Date.now();
+    const timeDiff = now - lastAsteroidDestroyedTimeRef.current;
+    if (timeDiff < 4000) {
+      comboMultiplierRef.current = Math.min(10, comboMultiplierRef.current + 1);
+    } else {
+      comboMultiplierRef.current = 1;
+    }
+    lastAsteroidDestroyedTimeRef.current = now;
+    setComboMultiplier(comboMultiplierRef.current);
+
+    const comboMult = comboMultiplierRef.current;
     const multiplier = getScoreMultiplierFromRef();
-    const awardedPoints = Math.round(asteroid.points * multiplier);
+    const awardedPoints = Math.round(asteroid.points * multiplier * comboMult);
     const newScore = scoreRef.current + awardedPoints;
     scoreRef.current = newScore;
     setCurrentScore(newScore);
+
+    if (comboMult > 1) {
+      addCombatLogMessage(`🔥 Combo x${comboMult}! (+${awardedPoints} skóre)`, '#f97316');
+    }
 
     // 2. Increments total stats
     setStats(curr => {
@@ -4435,7 +4571,22 @@ export default function App() {
       }
 
       // 2. Clear background fill
-      ctx.fillStyle = '#020617';
+      let bgFill = '#020617';
+      let starGlowColor = '#60a5fa';
+      
+      const activeMap = selectedMapRef.current;
+      if (activeMap === 'magma') {
+        bgFill = '#080101'; // Dark volcanic space black
+        starGlowColor = '#f97316'; // orange glow
+      } else if (activeMap === 'ice') {
+        bgFill = '#010c14'; // Dark frozen glacier space blue
+        starGlowColor = '#38bdf8'; // icy cyan glow
+      } else if (activeMap === 'gold') {
+        bgFill = '#080601'; // Dark amber rich space gold
+        starGlowColor = '#eab308'; // golden glow
+      }
+      
+      ctx.fillStyle = bgFill;
       ctx.fillRect(vx, vy, vw, vh);
 
       // --- A. PARALLAX STARFIELD RENDER ---
@@ -4448,11 +4599,21 @@ export default function App() {
         ctx.save();
         ctx.beginPath();
         ctx.arc(vx + sx, vy + sy, star.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+        
+        // Match star colors to map type slightly
+        if (activeMap === 'magma') {
+          ctx.fillStyle = star.speed > 0.15 ? `rgba(254, 215, 170, ${star.brightness})` : `rgba(255, 255, 255, ${star.brightness})`;
+        } else if (activeMap === 'ice') {
+          ctx.fillStyle = star.speed > 0.15 ? `rgba(224, 242, 254, ${star.brightness})` : `rgba(255, 255, 255, ${star.brightness})`;
+        } else if (activeMap === 'gold') {
+          ctx.fillStyle = star.speed > 0.15 ? `rgba(254, 243, 199, ${star.brightness})` : `rgba(255, 255, 255, ${star.brightness})`;
+        } else {
+          ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+        }
         
         if (star.size > 1.3) {
           ctx.shadowBlur = 4;
-          ctx.shadowColor = '#60a5fa';
+          ctx.shadowColor = starGlowColor;
         }
         ctx.fill();
         ctx.restore();
@@ -5530,6 +5691,168 @@ export default function App() {
       // Standard Single Viewport mode
       drawSingleViewport(playersRef.current[0], 0, 0, width, height, false);
     }
+
+    // --- DRAW TRANSPARENT COCKPIT RADAR MINIMAP ---
+    if (playersRef.current.length > 0) {
+      const centerPlayer = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
+      if (centerPlayer) {
+        ctx.save();
+        const size = 150;
+        const margin = 25;
+        const cx = width - 75 - margin;
+        const cy = height - 75 - margin - 35; // offset slightly upwards to stay clear of other frames
+        
+        // Background dark circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, 75, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+        ctx.fill();
+        
+        // Neon green-blue cyber border
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        
+        // Glow effect
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = '#06b6d4';
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 50, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 25, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0; // reset
+        
+        // Crosshair lines
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        ctx.moveTo(cx - 75, cy);
+        ctx.lineTo(cx + 75, cy);
+        ctx.moveTo(cx, cy - 75);
+        ctx.lineTo(cx, cy + 75);
+        ctx.stroke();
+
+        // Moving sweep arm effect
+        const sweepAngle = (Date.now() / 1200) % (Math.PI * 2);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, 75, sweepAngle, sweepAngle + 0.25);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.08)';
+        ctx.fill();
+
+        // Scale factor: Radar ranges up to 2500 pixels
+        const radarRange = 2500;
+        const scale = 75 / radarRange;
+
+        // Draw Asteroids on Radar
+        asteroidsRef.current.forEach(ast => {
+          const dx = ast.x - centerPlayer.x;
+          const dy = ast.y - centerPlayer.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < radarRange) {
+            const ax = cx + dx * scale;
+            const ay = cy + dy * scale;
+            ctx.beginPath();
+            ctx.arc(ax, ay, Math.max(1.5, ast.radius * 0.08), 0, Math.PI * 2);
+            if (ast.asteroidType === 'magma') {
+              ctx.fillStyle = '#f97316'; // orange magma
+            } else if (ast.asteroidType === 'ice') {
+              ctx.fillStyle = '#38bdf8'; // blue ice
+            } else if (ast.asteroidType === 'gold' || ast.asteroidType === 'legendary') {
+              ctx.fillStyle = '#eab308'; // gold
+            } else {
+              ctx.fillStyle = '#94a3b8'; // grey default
+            }
+            ctx.fill();
+          }
+        });
+
+        // Draw Pirates on Radar
+        piratesRef.current.forEach(pirate => {
+          const dx = pirate.x - centerPlayer.x;
+          const dy = pirate.y - centerPlayer.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < radarRange) {
+            const px = cx + dx * scale;
+            const py = cy + dy * scale;
+            
+            // Pulsating red dot for threats
+            const pulse = 1.0 + Math.sin(Date.now() / 150) * 0.3;
+            ctx.beginPath();
+            ctx.arc(px, py, 3.5 * pulse, 0, Math.PI * 2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            
+            ctx.strokeStyle = '#f43f5e';
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
+          }
+        });
+
+        // Draw Boss on Radar (large threat!)
+        if (isBossFightActiveRef.current && bossRef.current) {
+          const boss = bossRef.current;
+          const dx = boss.x - centerPlayer.x;
+          const dy = boss.y - centerPlayer.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < radarRange) {
+            const bx = cx + dx * scale;
+            const by = cy + dy * scale;
+            
+            // Flashing heavy red ring
+            const flash = Date.now() % 400 < 200;
+            ctx.beginPath();
+            ctx.arc(bx, by, 7.0, 0, Math.PI * 2);
+            ctx.fillStyle = flash ? 'rgba(239, 68, 68, 0.8)' : 'rgba(244, 63, 94, 0.3)';
+            ctx.fill();
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Core dot
+            ctx.beginPath();
+            ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+          }
+        }
+
+        // Draw Player and co-pilots
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            const dx = p.x - centerPlayer.x;
+            const dy = p.y - centerPlayer.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < radarRange) {
+              const px = cx + dx * scale;
+              const py = cy + dy * scale;
+              
+              ctx.beginPath();
+              ctx.arc(px, py, 3, 0, Math.PI * 2);
+              ctx.fillStyle = p.color;
+              ctx.fill();
+              
+              ctx.strokeStyle = '#ffffff';
+              ctx.lineWidth = 0.8;
+              ctx.stroke();
+            }
+          }
+        });
+
+        // Map label overlay
+        ctx.font = 'bold 8px monospace';
+        ctx.fillStyle = '#06b6d4';
+        ctx.textAlign = 'center';
+        ctx.fillText('RADAR SCANNER', cx, cy - 82);
+        
+        ctx.font = '600 7px monospace';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText('DOSAH: 2.5K KM', cx, cy + 86);
+        ctx.restore();
+      }
+    }
   };
 
   // --- RE-IGNITE GAME RUN CLEAN ---
@@ -5572,8 +5895,41 @@ export default function App() {
         <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between p-4 sm:p-5" id="game-hud-interface">
           
           {/* TOP HUD ROW: Ores & Score */}
-          <div className="w-full flex justify-between items-start gap-4">
+          <div className="w-full flex justify-between items-start gap-4 relative">
             
+            {/* ABSOLUTE CENTER TOP: Boss Health Bar or Map Sector Badge */}
+            {isBossFightActive ? (
+              <div className="absolute left-1/2 -translate-x-1/2 top-0 max-w-[420px] w-[90%] sm:w-full bg-slate-950/95 border border-red-500/30 rounded-2xl px-4 py-2.5 flex flex-col items-center justify-center shadow-[0_10px_35px_rgba(239,68,68,0.2)] pointer-events-auto backdrop-blur-sm z-30 animate-fade-in">
+                <div className="w-full flex justify-between items-center text-[10px] font-black tracking-wider text-red-400 font-sans leading-none mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                    <span>👑 OMEGA KORZÁR (BOSS)</span>
+                  </div>
+                  <span className="font-mono text-red-300 font-bold">{Math.ceil(bossHp)} / {bossMaxHp} HP</span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-900 rounded-full border border-slate-800/80 overflow-hidden relative">
+                  <div 
+                    className="h-full bg-gradient-to-r from-red-600 via-orange-500 to-amber-500 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(239,68,68,0.5)]"
+                    style={{ width: `${Math.max(0, Math.min(100, (bossHp / bossMaxHp) * 100))}%` }}
+                  />
+                </div>
+                <div className="w-full flex justify-between items-center text-[8px] font-mono text-slate-400 mt-1.5 leading-none">
+                  <span>ŽIVOTY: <span className="text-[10px] tracking-normal">{Array.from({ length: bossMaxLives }).map((_, i) => i < bossLives ? "🔥" : "🖤").join(" ")}</span></span>
+                  <span className="text-orange-400 font-bold">REGEN: +{bossHp < bossMaxHp ? 250 + (6 - bossLives) * 180 : 0} HP/s</span>
+                </div>
+              </div>
+            ) : (
+              <div className="absolute left-1/2 -translate-x-1/2 top-1.5 pointer-events-auto bg-slate-950/90 border border-slate-800/80 rounded-full px-4.5 py-1.5 flex items-center gap-2 shadow-2xl backdrop-blur-xs select-none z-30">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="text-[9px] font-black tracking-widest text-slate-200 font-mono uppercase">
+                  {selectedMap === 'silicon' && "🛰️ SEKTOR ALPHA: KŘEMÍKOVÝ PÁS"}
+                  {selectedMap === 'magma' && "🔥 SEKTOR BETA: MAGMATICKÉ PEKLO"}
+                  {selectedMap === 'ice' && "❄️ SEKTOR GAMMA: LEDOVÝ PRSTENEC"}
+                  {selectedMap === 'gold' && "👑 SEKTOR DELTA: ZLATÉ JÁDRO"}
+                </span>
+              </div>
+            )}
+
             {/* Ores Counters Grid */}
             <div className="flex gap-2.5 pointer-events-auto select-none bg-slate-950/80 backdrop-blur-xs px-4 py-2.5 rounded-2xl border border-slate-800 shadow-xl">
               {/* Crystals wallet */}
@@ -5620,16 +5976,59 @@ export default function App() {
               ) : null}
             </div>
 
-            {/* Live Score block */}
-            <div className="bg-slate-950/85 border border-slate-800 rounded-2xl px-5 py-2.5 flex flex-col items-end shadow-xl min-w-[120px]">
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider leading-none">SKÓRE</span>
-              <AnimatedScore value={currentScore} className="text-xl font-black text-amber-400 font-mono mt-1 tracking-tight" />
-              <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
-                <Award className="w-3 h-3 text-slate-500" />
-                <span>Nejlepší: {stats.highScore}</span>
+            {/* Live Score block & Combo Multiplier stack */}
+            <div className="flex flex-col items-end gap-2">
+              <div className="bg-slate-950/85 border border-slate-800 rounded-2xl px-5 py-2.5 flex flex-col items-end shadow-xl min-w-[120px]">
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-wider leading-none">SKÓRE</span>
+                <AnimatedScore value={currentScore} className="text-xl font-black text-amber-400 font-mono mt-1 tracking-tight" />
+                <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
+                  <Award className="w-3 h-3 text-slate-500" />
+                  <span>Nejlepší: {stats.highScore}</span>
+                </div>
               </div>
+
+              {/* Combo Multiplier Badge with time countdown */}
+              {comboMultiplier > 1 && (
+                <div className="bg-gradient-to-r from-amber-600 to-red-600 border border-amber-400 rounded-2xl px-4 py-2 flex flex-col items-center justify-center shadow-2xl animate-pulse pointer-events-auto min-w-[140px]">
+                  <span className="text-[9px] font-black text-amber-200 tracking-widest uppercase font-sans">🔥 COMBO NÁSOBIČ</span>
+                  <span className="text-2xl font-black text-white mt-0.5 font-mono">
+                    x{comboMultiplier}
+                  </span>
+                  <div className="w-full h-1 bg-slate-950/40 rounded-full mt-1.5 overflow-hidden">
+                    <div 
+                      className="h-full bg-yellow-400 rounded-full transition-all duration-75"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, ((4000 - (Date.now() - lastAsteroidDestroyedTimeRef.current)) / 4000) * 100))}%`
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
+          </div>
+
+          {/* COMBAT TELEMETRY LOG */}
+          <div className="absolute left-4 bottom-[240px] pointer-events-auto flex flex-col gap-1.5 max-w-[320px] bg-slate-950/80 border border-slate-800 px-3.5 py-3 rounded-2xl shadow-2xl backdrop-blur-xs select-none font-mono text-[10px] text-slate-400">
+            <div className="flex items-center gap-1.5 font-sans font-extrabold text-[10px] text-cyan-400 uppercase tracking-widest border-b border-slate-800/80 pb-1 mb-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              <span>📡 KOSMICKÝ BOJOVÝ PROTOKOL</span>
+            </div>
+            {combatLog.length === 0 ? (
+              <span className="text-slate-600 italic">Systémy trupu stabilní. Žádné kolize.</span>
+            ) : (
+              <div className="flex flex-col gap-1 max-h-[105px] overflow-y-auto scrollbar-thin">
+                {combatLog.map((log) => {
+                  const timeStr = new Date(log.timestamp).toLocaleTimeString('cs-CZ', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                  return (
+                    <div key={log.id} className="flex gap-1.5 leading-normal animate-fade-in" style={{ color: log.color }}>
+                      <span className="text-slate-500 font-medium font-mono">[{timeStr}]</span>
+                      <span className="font-semibold">{log.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* ACTIVE ABILITIES HUD (DONKEY KEEPER) */}
@@ -6124,6 +6523,96 @@ export default function App() {
                       NOČNÍ MŮRA
                     </span>
                     <span className="text-[8px] text-rose-500/80 mt-0.5">Škody +120%, Dual-Lasery</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Map / Sector Selection */}
+              <div className="space-y-2 pt-2.5 border-t border-slate-900">
+                <label className="text-xs font-bold text-slate-300 block">Kosmický Sektor (Mapa):</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMap('silicon');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      selectedMap === 'silicon'
+                        ? 'bg-slate-900 border-slate-500 text-slate-200 shadow-[0_0_12px_rgba(148,163,184,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">🪨</span>
+                      <span className="font-bold tracking-tight text-slate-300">SEKTOR ALPHA: KŘEMÍKOVÝ PÁS</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Standardní pás s vyváženým výskytem všech surovin. Bezpečný start. (1.0x skóre)
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMap('magma');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      selectedMap === 'magma'
+                        ? 'bg-orange-950/20 border-orange-500 text-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">🔥</span>
+                      <span className="font-bold tracking-tight text-orange-300">SEKTOR BETA: MAGMATICKÉ PEKLO</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Zvýšený výskyt magmatických skál s drahým obsidiánem. (1.25x skóre)
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMap('ice');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      selectedMap === 'ice'
+                        ? 'bg-sky-950/20 border-sky-500 text-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">❄️</span>
+                      <span className="font-bold tracking-tight text-sky-300">SEKTOR GAMMA: LEDOVÝ PRSTENEC</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Těžařská zóna s masivním podílem ledových jader a diamantů. (1.25x skóre)
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMap('gold');
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      selectedMap === 'gold'
+                        ? 'bg-amber-950/20 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">👑</span>
+                      <span className="font-bold tracking-tight text-amber-300 font-black">SEKTOR DELTA: ZLATÉ JÁDRO</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Masivní naleziště ryzího zlata. Agresivní korzářská ochrana! (1.5x skóre)
+                    </div>
                   </button>
                 </div>
               </div>
