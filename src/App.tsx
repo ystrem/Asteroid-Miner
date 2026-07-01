@@ -73,6 +73,64 @@ const ASTEROID_COLORS = {
   small: '#d1d5db',  // gray-300
 };
 
+// --- ANIMATED HUD COMPONENTS ---
+interface AnimatedScoreProps {
+  value: number;
+  className?: string;
+}
+
+function AnimatedScore({ value, className = "" }: AnimatedScoreProps) {
+  const [animationClass, setAnimationClass] = useState("");
+  const prevValueRef = useRef(value);
+
+  useEffect(() => {
+    if (value !== prevValueRef.current) {
+      setAnimationClass("animate-score-pop");
+      prevValueRef.current = value;
+      const timer = setTimeout(() => {
+        setAnimationClass("");
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [value]);
+
+  return <span className={`${className} ${animationClass}`}>{value}</span>;
+}
+
+interface AnimatedHealthProps {
+  value: number;
+  maxValue: number;
+  className?: string;
+  style?: React.CSSProperties;
+  isShield?: boolean;
+}
+
+function AnimatedHealth({ value, maxValue, className = "", style = {}, isShield = false }: AnimatedHealthProps) {
+  const [animationClass, setAnimationClass] = useState("");
+  const prevValueRef = useRef(value);
+
+  useEffect(() => {
+    if (value !== prevValueRef.current) {
+      if (value < prevValueRef.current) {
+        setAnimationClass("animate-damage-pop");
+      } else {
+        setAnimationClass("animate-heal-pop");
+      }
+      prevValueRef.current = value;
+      const timer = setTimeout(() => {
+        setAnimationClass("");
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [value]);
+
+  return (
+    <span className={`${className} ${animationClass}`} style={style}>
+      {Math.round(value)} / {maxValue} HP
+    </span>
+  );
+}
+
 export default function App() {
   // --- STATE ---
   const [upgrades, setUpgrades] = useState<Upgrades>(loadUpgrades());
@@ -5517,7 +5575,7 @@ export default function App() {
             {/* Live Score block */}
             <div className="bg-slate-950/85 border border-slate-800 rounded-2xl px-5 py-2.5 flex flex-col items-end shadow-xl min-w-[120px]">
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider leading-none">SKÓRE</span>
-              <span className="text-xl font-black text-amber-400 font-mono mt-1 tracking-tight">{currentScore}</span>
+              <AnimatedScore value={currentScore} className="text-xl font-black text-amber-400 font-mono mt-1 tracking-tight" />
               <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
                 <Award className="w-3 h-3 text-slate-500" />
                 <span>Nejlepší: {stats.highScore}</span>
@@ -5778,9 +5836,7 @@ export default function App() {
                         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: p.color }} />
                         Trup lodi
                       </span>
-                      <span className="font-bold" style={{ color: p.color }}>
-                        {Math.round(p.hull)} / {pMaxHull} HP
-                      </span>
+                      <AnimatedHealth value={p.hull} maxValue={pMaxHull} className="font-bold" style={{ color: p.color }} />
                     </div>
                     <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
                       <div 
@@ -5801,9 +5857,7 @@ export default function App() {
                           <Shield className="w-2.5 h-2.5 fill-current" style={{ color: p.glowColor }} />
                           Energetický štít
                         </span>
-                        <span className="font-bold" style={{ color: p.glowColor }}>
-                          {Math.round(p.shield)} / {pMaxShield} HP
-                        </span>
+                        <AnimatedHealth value={p.shield} maxValue={pMaxShield} className="font-bold" style={{ color: p.glowColor }} isShield />
                       </div>
                       <div className="w-full bg-slate-900 h-2 rounded-full border border-slate-800 overflow-hidden">
                         <div 
