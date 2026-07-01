@@ -62,8 +62,23 @@ import {
   Gamepad,
   User,
   Users,
-  Skull
+  Skull,
+  Cpu
 } from 'lucide-react';
+
+// Optimize performance by patching canvas shadowBlur setter once globally
+if (typeof window !== 'undefined' && window.CanvasRenderingContext2D) {
+  const originalSet = Object.getOwnPropertyDescriptor(window.CanvasRenderingContext2D.prototype, 'shadowBlur')?.set;
+  if (originalSet) {
+    Object.defineProperty(window.CanvasRenderingContext2D.prototype, 'shadowBlur', {
+      set: function(this: CanvasRenderingContext2D, value: number) {
+        if ((window as any).__lowPerformanceMode) return;
+        originalSet.call(this, value);
+      },
+      configurable: true
+    });
+  }
+}
 
 const ASTEROID_COLORS = {
   colossal: '#374151', // deep gray-700
@@ -145,6 +160,12 @@ export default function App() {
   const [gamepadsDetected, setGamepadsDetected] = useState<boolean[]>([false, false]);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
   const [enemiesEnabled, setEnemiesEnabled] = useState<boolean>(true);
+  const [lowPerformanceMode, setLowPerformanceMode] = useState<boolean>(() => {
+    if (typeof navigator !== 'undefined') {
+      return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Steam|SteamDeck|Linux/i.test(navigator.userAgent);
+    }
+    return false;
+  });
 
   // Floating notifications/gains to display on screen
   const [gains, setGains] = useState<{ id: string; text: string; x: number; y: number; color: string }[]>([]);
@@ -236,6 +257,7 @@ export default function App() {
   const gameModeRef = useRef<'single' | 'coop'>('single');
   const difficultyRef = useRef<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
   const enemiesEnabledRef = useRef<boolean>(true);
+  const lowPerformanceModeRef = useRef<boolean>(lowPerformanceMode);
 
   // Astronaut explorer minigame state
   const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(false);
@@ -328,7 +350,11 @@ export default function App() {
   useEffect(() => {
     difficultyRef.current = difficulty;
     enemiesEnabledRef.current = enemiesEnabled;
-  }, [difficulty, enemiesEnabled]);
+    lowPerformanceModeRef.current = lowPerformanceMode;
+    if (typeof window !== 'undefined') {
+      (window as any).__lowPerformanceMode = lowPerformanceMode;
+    }
+  }, [difficulty, enemiesEnabled, lowPerformanceMode]);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -505,33 +531,32 @@ export default function App() {
           }
         }
 
-        // Ability bindings based on player associations
-        if (code === 'KeyQ' || code === 'Digit9' || code === 'Numpad9') {
+        // --- PLAYER 1 (Arrow keys, right side) ABILITIES ---
+        if (code === 'Digit9' || code === 'Numpad9') {
           const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
           if (p1) triggerChainLightning(p1.playerNum);
-        } else if (code === 'KeyE' || code === 'Digit8' || code === 'Numpad8') {
+        } else if (code === 'Digit8' || code === 'Numpad8') {
           const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
           if (p1) triggerPulseWaveRing(p1.playerNum);
-        } else if (code === 'KeyR' || code === 'Digit7' || code === 'Numpad7') {
+        } else if (code === 'Digit7' || code === 'Numpad7') {
           const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
           if (p1) triggerSuperMagnetVacuum(p1.playerNum);
-        } else if (code === 'KeyY' || code === 'KeyZ' || code === 'Digit6' || code === 'Numpad6') {
-          // KeyY / KeyZ (handling QWERTY and QWERTZ layouts) or Digit 6
+        } else if (code === 'Digit6' || code === 'Numpad6') {
           const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
           if (p1) triggerStinkySock(p1.playerNum);
         }
 
-        // Player 2 abilities mapping (Numbers 1, 2, 3, 5)
-        if (code === 'Digit1' || code === 'Numpad1') {
+        // --- PLAYER 2 (WASD keys, left side) ABILITIES ---
+        if (code === 'KeyQ' || code === 'Digit1' || code === 'Numpad1') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerChainLightning(p2.playerNum);
-        } else if (code === 'Digit2' || code === 'Numpad2') {
+        } else if (code === 'KeyE' || code === 'Digit2' || code === 'Numpad2') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerPulseWaveRing(p2.playerNum);
-        } else if (code === 'Digit3' || code === 'Numpad3') {
+        } else if (code === 'KeyR' || code === 'Digit3' || code === 'Numpad3') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerSuperMagnetVacuum(p2.playerNum);
-        } else if (code === 'Digit5' || code === 'Numpad5') {
+        } else if (code === 'KeyT' || code === 'KeyC' || code === 'Digit5' || code === 'Numpad5') {
           const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
           if (p2) triggerStinkySock(p2.playerNum);
         }
@@ -606,7 +631,8 @@ export default function App() {
         for (let i = 0; i < gamepads.length; i++) {
           const gp = gamepads[i];
           if (gp) {
-            const anyButtonPressed = gp.buttons.some(b => b.pressed);
+            const anyAxisMoved = gp.axes.some(a => Math.abs(a) > 0.45);
+            const anyButtonPressed = gp.buttons.some(b => b.pressed) || anyAxisMoved;
             if (anyButtonPressed) {
               gamepadOnlyStartRef.current = i;
               handleStartGame();
@@ -1780,13 +1806,14 @@ export default function App() {
     // --- READ ACTIVE GAMEPAD DEVICES ---
     const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
 
-    // Check connected gamepads to see if any button is pressed — if so, drop them in!
+    // Check connected gamepads to see if any button is pressed or stick is moved — if so, drop them in!
     let anyGamepadButtonPressed = false;
     let pressedGamepadIdx = -1;
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (gp) {
-        const anyButtonPressed = gp.buttons.some(b => b.pressed);
+        const anyAxisMoved = gp.axes.some(a => Math.abs(a) > 0.4);
+        const anyButtonPressed = gp.buttons.some(b => b.pressed) || anyAxisMoved;
         if (anyButtonPressed) {
           anyGamepadButtonPressed = true;
           pressedGamepadIdx = i;
@@ -1808,7 +1835,7 @@ export default function App() {
       }
     }
 
-    let isAnyLTPressed = false;
+    let isAnyPlayerThrusting = false;
 
     // --- PROCESS INPUT FOR ALL ACTIVE PLAYERS ---
     playersRef.current.forEach(p => {
@@ -1840,23 +1867,34 @@ export default function App() {
             p.angle += 0.08;
           }
 
-          if (keysPressed.current['ControlLeft']) {
+          // Use ControlLeft, KeyF, or Space (only if Player 1 is not active on Arrow keys) to fire laser
+          const hasP1 = playersRef.current.some(pl => pl.inputSource === 'keyboard_p1');
+          if (keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || (!hasP1 && keysPressed.current['Space'])) {
             fireActiveLaser(p, p.playerNum);
           }
         } 
         else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
           const gp = gamepads[p.gamepadIndex];
           if (gp) {
+            // Helper for edge-detection of buttons (just-pressed)
+            const getButtonJustPressed = (btnIdx: number): boolean => {
+              const pressed = gp.buttons[btnIdx]?.pressed || false;
+              const key = `gp_${p.gamepadIndex}_btn_${btnIdx}`;
+              const wasPressed = !!lastGamepadButtonsRef.current[key];
+              lastGamepadButtonsRef.current[key] = pressed;
+              return pressed && !wasPressed;
+            };
+
+            // Read analog sticks (Left stick = axes 0, 1; Right stick = axes 2, 3)
+            const lX = gp.axes[0] || 0;
+            const lY = gp.axes[1] || 0;
             const rX = gp.axes[2] || 0;
             const rY = gp.axes[3] || 0;
+
+            const leftStickMagnitude = Math.hypot(lX, lY);
             const rightStickMagnitude = Math.hypot(rX, rY);
 
-            const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
-            if (isLTPressed) {
-              isAnyLTPressed = true;
-            }
-
-            // Allow steering even when accelerating with LT (disabled the drift lock bypass)
+            // 1. --- RIGHT STICK ROTATION (Otáčení lodičky) ---
             if (rightStickMagnitude > 0.22) {
               p.targetAngle = Math.atan2(rY, rX);
               let deltaAngle = p.targetAngle - p.angle;
@@ -1866,42 +1904,47 @@ export default function App() {
               p.angle += deltaAngle * Math.min(1, rotSpeed);
             }
 
-            if (isLTPressed) {
-              p.thrusting = true;
+            // 2. --- LEFT STICK FLIGHT DIRECTION (Smer, kudy sa poletí) ---
+            if (leftStickMagnitude > 0.22) {
+              p.gamepadThrustAngle = Math.atan2(lY, lX);
             } else {
-              p.thrusting = false;
-              p.reversing = false;
+              p.gamepadThrustAngle = p.angle;
             }
 
-            const btnFire = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed;
-            if (btnFire) {
+            // 3. --- LT FORWARD MOVEMENT (Pohyb dopředu) ---
+            const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
+            p.thrusting = isLTPressed;
+            p.reversing = false;
+
+            // 4. --- RT SHOOTING (Střílení) ---
+            const isRTPressed = gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15;
+            if (isRTPressed) {
               fireActiveLaser(p, p.playerNum);
             }
 
-            if (gp.buttons[2]?.pressed || gp.buttons[4]?.pressed) {
-              triggerChainLightning(p.playerNum);
-            }
-            if (gp.buttons[1]?.pressed) {
+            // 5. --- SPECIAL ATTACKS (X, Y, B) ---
+            // B button (1) -> Pulse Wave Ring (Pulzní vlna)
+            if (getButtonJustPressed(1)) {
               triggerPulseWaveRing(p.playerNum);
             }
-            if (gp.buttons[3]?.pressed || gp.buttons[5]?.pressed) {
+            // X button (2) -> Super Magnet Vacuum (Super magnet)
+            if (getButtonJustPressed(2)) {
               triggerSuperMagnetVacuum(p.playerNum);
             }
-
-            // Gamepad anchoring triggers (Stick Click, D-Pad Down, Select)
-            const btnAnchor = gp.buttons[10]?.pressed || gp.buttons[11]?.pressed || gp.buttons[13]?.pressed || gp.buttons[8]?.pressed;
-            const btnKey = `gp_${p.gamepadIndex || 0}_anchor`;
-            const wasAnchorPressed = !!lastGamepadButtonsRef.current[btnKey];
-            if (btnAnchor && !wasAnchorPressed) {
-              toggleAnchor(p);
+            // Y button (3) -> Chain Lightning (Bleskový řetěz)
+            if (getButtonJustPressed(3)) {
+              triggerChainLightning(p.playerNum);
             }
-            lastGamepadButtonsRef.current[btnKey] = !!btnAnchor;
           }
+        }
+
+        if (p.thrusting) {
+          isAnyPlayerThrusting = true;
         }
       }
     });
 
-    updateEngineHum(isAnyLTPressed);
+    updateEngineHum(isAnyPlayerThrusting);
 
     // --- APPLY PHYSICAL MOVEMENT SPEEDS AND DECELERATION ---
     playersRef.current.forEach(p => {
@@ -2027,14 +2070,15 @@ export default function App() {
         const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
 
         if (p.thrusting) {
-          p.vx += Math.cos(p.angle) * thrustPower;
-          p.vy += Math.sin(p.angle) * thrustPower;
+          const tAngle = (p.inputSource === 'gamepad' && p.gamepadThrustAngle !== undefined) ? p.gamepadThrustAngle : p.angle;
+          p.vx += Math.cos(tAngle) * thrustPower;
+          p.vy += Math.sin(tAngle) * thrustPower;
 
           // Jet exhaust particles with custom player primary color booster flares
           if (Math.random() < 0.4) {
-            const backAngle = p.angle + Math.PI + (Math.random() * 0.6 - 0.3);
-            const ex = p.x - Math.cos(p.angle) * 18;
-            const ey = p.y - Math.sin(p.angle) * 18;
+            const backAngle = tAngle + Math.PI + (Math.random() * 0.6 - 0.3);
+            const ex = p.x - Math.cos(tAngle) * 18;
+            const ey = p.y - Math.sin(tAngle) * 18;
             particlesRef.current.push({
               id: Math.random().toString(36).substring(2, 9),
               x: ex,
@@ -3611,6 +3655,10 @@ export default function App() {
       particle.alpha = 1.0 - (particle.lifetime / particle.maxLifetime);
       return particle;
     }).filter(particle => particle.lifetime < particle.maxLifetime);
+
+    if (lowPerformanceModeRef.current && particlesRef.current.length > 50) {
+      particlesRef.current = particlesRef.current.slice(-50);
+    }
 
     // --- PLAYER LASERS VS BOSS COLLISION ---
     if (isBossFightActiveRef.current && bossRef.current) {
@@ -5751,16 +5799,25 @@ export default function App() {
             {showHowTo && (
               <div className="mt-2 bg-slate-950/90 border border-slate-800 p-3 rounded-xl max-w-xs text-xs space-y-2 text-slate-300 shadow-2xl animate-fade-in pr-5">
                 <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block mb-1">Letový manuál</span>
-                <p className="text-cyan-400 font-bold border-b border-slate-900 pb-0.5 text-[10px]">Hráč 1 (Modrý):</p>
-                <p>• <b>Let:</b> Klávesy [ W / S ] nebo Gamepad Levý trigger (LT)</p>
-                <p>• <b>Rotace:</b> [ A / D ] / Myš</p>
-                <p>• <b>Střelba:</b> [ Mezerník ] / Levý klik / Gamepad [ A ]</p>
+                <p className="text-cyan-400 font-bold border-b border-slate-900 pb-0.5 text-[10px]">Hráč 1 (Modrý - Šipky):</p>
+                <p>• <b>Pohyb:</b> Šipky [ ↑ / ↓ ] (Let / Zpět)</p>
+                <p>• <b>Rotace:</b> Šipky [ ← / → ]</p>
+                <p>• <b>Laser:</b> [ Mezerník ] / [ Pravý CTRL ]</p>
+                <p>• <b>Kotvení:</b> Klávesa [ H ] nebo [ 0 ]</p>
                 
-                <p className="text-purple-400 font-bold border-b border-slate-900 pb-0.5 pt-1 text-[10px]">Hráč 2 (Fialový - Kooporace):</p>
-                <p>• <b>Let:</b> Šipka nahoru/dolů nebo klávesy [ I / K ]</p>
-                <p>• <b>Rotace:</b> Šipky vlevo/vpravo nebo klávesy [ J / L ]</p>
-                <p>• <b>Střelba:</b> [ Enter ] / Pravý Shift / klávesa [ O ]</p>
-                <p className="text-[10px] text-slate-500 font-mono mt-1 border-t border-slate-900 pt-1">Prostor se inteligentně posouvá na průměrný midpoint lodí.</p>
+                <p className="text-purple-400 font-bold border-b border-slate-900 pb-0.5 pt-1 text-[10px]">Hráč 2 (Fialový - WASD):</p>
+                <p>• <b>Pohyb:</b> Klávesy [ W / S ] (Let / Zpět)</p>
+                <p>• <b>Rotace:</b> Klávesy [ A / D ]</p>
+                <p>• <b>Laser:</b> [ Levý CTRL ] / [ F ] / [ Mezerník ]</p>
+                <p>• <b>Kotvení:</b> Klávesa [ G ] nebo [ 4 ]</p>
+
+                <p className="text-emerald-400 font-bold border-b border-slate-900 pb-0.5 pt-1 text-[10px]">Ovladač (Gamepad):</p>
+                <p>• <b>Let vpřed:</b> Levý Trigger [ LT ]</p>
+                <p>• <b>Směr letu:</b> Levá páčka</p>
+                <p>• <b>Otáčení lodi:</b> Pravá páčka</p>
+                <p>• <b>Laser (Střelba):</b> Pravý Trigger [ RT ]</p>
+                <p>• <b>Útoky (Schopnosti):</b> Tlačítka [ X, Y, B ]</p>
+                <p className="text-[10px] text-slate-500 font-mono mt-1 border-t border-slate-900 pt-1">Hráči se mohou připojovat dynamicky stisknutím libovolného tlačítka!</p>
               </div>
             )}
           </div>
@@ -5943,33 +6000,37 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-slate-300 font-mono">
                 <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
                   <span className="text-cyan-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 1 (KLÁVESNICE - ŠIPKY)</span>
-                  <p>• <b>Let vpřed:</b> Šipka nahoru</p>
-                  <p>• <b>Zpětný chod:</b> Šipka dolů</p>
-                  <p>• <b>Otáčení:</b> Šipka vlevo / vpravo</p>
+                  <p>• <b>Pohyb:</b> Šipky [ ↑ / ↓ ] (Let / Zpět)</p>
+                  <p>• <b>Otáčení:</b> Šipky [ ← / → ]</p>
                   <p>• <b>Laser:</b> Pravý CTRL / Mezerník</p>
-                  <p>• <b>Dovednosti:</b> Čísla [ 7, 8, 9, 0 ]</p>
+                  <p>• <b>Kotva:</b> Klávesa [ H ] nebo [ 0 ]</p>
+                  <p>• <b>Dovednosti:</b> Čísla [ 9, 8, 7, 6 ]</p>
                 </div>
 
                 <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
                   <span className="text-purple-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 2 (KLÁVESNICE - WASD)</span>
-                  <p>• <b>Let vpřed:</b> Klávesa [ W ]</p>
-                  <p>• <b>Zpětný chod:</b> Klávesa [ S ]</p>
+                  <p>• <b>Pohyb:</b> Klávesy [ W / S ] (Let / Zpět)</p>
                   <p>• <b>Otáčení:</b> Klávesy [ A / D ]</p>
-                  <p>• <b>Laser:</b> Levý CTRL</p>
-                  <p>• <b>Dovednosti:</b> Čísla [ 1, 2, 3, 4 ]</p>
+                  <p>• <b>Laser:</b> Levý CTRL / [ F ] / Mezerník</p>
+                  <p>• <b>Kotva:</b> Klávesa [ G ] nebo [ 4 ]</p>
+                  <p>• <b>Dovednosti:</b> [ Q, E, R, T ] nebo [ 1, 2, 3, 5 ]</p>
                 </div>
               </div>
 
               <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-850/80 text-[11px] text-slate-300 leading-relaxed font-sans">
-                <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-1 mb-1.5 text-[10px] uppercase">🎮 PILOTI NA OVLADAČÍCH (GAMEPADECH)</span>
-                <p>• Připojte USB nebo Bluetooth gamepad a stiskněte libovolné tlačítko.</p>
-                <p>• Ovladač se <b>automaticky přihlásí</b> jako nový nezávislý pilot přímo uprostřed akce!</p>
-                <p>• V průběhu hry se takto může připojit <b>libovolné množství hráčů</b> podle počtu gamepadů.</p>
-                <p>• Každého pilota lze odpojit tlačítkem v dolním panelu lodi.</p>
+                <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-1 mb-1.5 text-[10px] uppercase">🎮 PILOTI NA OVLADAČÍCH (GAMEPADECH / STEAM DECKU)</span>
+                <p>• Připojte gamepad a stiskněte jakékoli tlačítko pro automatický drop-in!</p>
+                <p className="mt-1.5 pt-1.5 border-t border-slate-900/60 font-mono text-[10px] text-slate-400 space-y-0.5">
+                  • <b>Let vpřed:</b> Levý Trigger [ LT ]<br/>
+                  • <b>Laser (Střelba):</b> Pravý Trigger [ RT ]<br/>
+                  • <b>Směr letu:</b> Levá analogová páčka<br/>
+                  • <b>Otáčení lodičky:</b> Pravá analogová páčka<br/>
+                  • <b>Speciální útoky (Schopnosti):</b> Tlačítka [ X, Y, B ]
+                </p>
               </div>
 
               {/* Gamepad connection status detection */}
-              {gamepadsDetected ? (
+              {gamepadsDetected.some(x => x) ? (
                 <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-mono bg-emerald-950/20 border border-emerald-900/30 px-3 py-1.5 rounded-lg">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span>Satelitní družice detekovala připojené herní ovladače (Gamepady)!</span>
@@ -6096,6 +6157,39 @@ export default function App() {
                 >
                   <div className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200 ${
                     enemiesEnabled ? 'translate-x-6' : 'translate-x-0'
+                  }`} />
+                </button>
+              </div>
+
+              {/* Performance Mode Option */}
+              <div className="flex items-center justify-between bg-slate-900/35 p-2.5 rounded-lg border border-slate-850">
+                <div className="space-y-0.5 pr-2">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" /> Úsporný režim (Steam Deck / Mobil):
+                    <span className={`px-1.5 py-0.5 text-[8px] font-mono font-black uppercase rounded ${
+                      lowPerformanceMode ? 'bg-cyan-950 text-cyan-400 border border-cyan-900/50 animate-pulse' : 'bg-slate-950 text-slate-400 border border-slate-900/50'
+                    }`}>
+                      {lowPerformanceMode ? 'ZAPNUTO (PLYNULÉ)' : 'VYPNUTO (KLASICKÉ)'}
+                    </span>
+                  </label>
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                    Vypne náročné zářící efekty a stíny, zredukuje nadbytečné efekty výbuchů a stabilizuje snímkovou frekvenci (FPS) na Steam Decku či mobilech.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLowPerformanceMode(!lowPerformanceMode);
+                    playLaserSound(0);
+                  }}
+                  className={`w-12 h-6 rounded-full p-0.5 transition-all cursor-pointer outline-none relative flex items-center shrink-0 ${
+                    lowPerformanceMode ? 'bg-cyan-600' : 'bg-slate-800'
+                  }`}
+                  id="performance-toggle-btn"
+                >
+                  <div className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200 ${
+                    lowPerformanceMode ? 'translate-x-6' : 'translate-x-0'
                   }`} />
                 </button>
               </div>

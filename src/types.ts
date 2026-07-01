@@ -137,6 +137,7 @@ export interface Player {
   anchorRadius?: number;
   isDrilling?: boolean;
   drillTime?: number;
+  gamepadThrustAngle?: number;
 }
 
 export interface Pirate {
