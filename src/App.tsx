@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Vector2D, 
   Asteroid, 
@@ -279,6 +280,13 @@ export default function App() {
   const sockCooldownRef = useRef<number>(0);
   const isBossFightActiveRef = useRef<boolean>(false);
 
+  const cameraShakeRef = useRef<number>(0);
+  const triggerCameraShake = (intensity: number) => {
+    cameraShakeRef.current = Math.min(25, cameraShakeRef.current + intensity);
+  };
+  const lastEventTimeRef = useRef<number>(Date.now());
+  const activeAnomalyRef = useRef<{ x: number; y: number; radius: number; lifetime: number; maxLifetime: number } | null>(null);
+
   const gameModeRef = useRef<'single' | 'coop'>('single');
   const difficultyRef = useRef<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
   const enemiesEnabledRef = useRef<boolean>(true);
@@ -404,6 +412,19 @@ export default function App() {
   useEffect(() => {
     const loadedStats = loadStats();
     setStats(loadedStats);
+  }, []);
+
+  // Automatic saving of progress every 30 seconds to localStorage
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isPlayingRef.current) {
+        saveUpgrades(upgradesRef.current);
+        saveStats(statsRef.current);
+        addCombatLogMessage("💾 Automatické ukládání: Herní postup úspěšně uložen do databáze lodi.", "#10b981");
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
   }, []);
 
   // --- TRIGGER ACTION NOTIFICATIONS ---
@@ -2308,6 +2329,76 @@ export default function App() {
       }
     });
 
+    // --- UPDATE SPATIAL ANOMALY ---
+    if (activeAnomalyRef.current) {
+      const anomaly = activeAnomalyRef.current;
+      anomaly.lifetime += 1;
+      
+      oresRef.current.forEach(ore => {
+        const dx = ore.x - anomaly.x;
+        const dy = ore.y - anomaly.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < anomaly.radius) {
+          const force = (1 - dist / anomaly.radius) * 0.45;
+          ore.vx -= (dx / dist) * force;
+          ore.vy -= (dy / dist) * force;
+        }
+      });
+      
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const dx = p.x - anomaly.x;
+          const dy = p.y - anomaly.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < anomaly.radius) {
+            const force = (1 - dist / anomaly.radius) * 0.28;
+            p.vx -= (dx / dist) * force;
+            p.vy -= (dy / dist) * force;
+          }
+        }
+      });
+      
+      asteroidsRef.current.forEach(ast => {
+        const dx = ast.x - anomaly.x;
+        const dy = ast.y - anomaly.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < anomaly.radius) {
+          const force = (1 - dist / anomaly.radius) * 0.18;
+          ast.vx -= (dx / dist) * force;
+          ast.vy -= (dy / dist) * force;
+        }
+      });
+
+      if (Math.random() < 0.4) {
+        const pAngle = Math.random() * Math.PI * 2;
+        const pDist = Math.random() * 80;
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: anomaly.x + Math.cos(pAngle) * pDist,
+          y: anomaly.y + Math.sin(pAngle) * pDist,
+          vx: -Math.cos(pAngle) * 2.5 + (Math.random() - 0.5) * 0.5,
+          vy: -Math.sin(pAngle) * 2.5 + (Math.random() - 0.5) * 0.5,
+          color: '#a855f7',
+          size: Math.random() * 4.0 + 1.5,
+          alpha: 1.0,
+          lifetime: 0,
+          maxLifetime: 40 + Math.floor(Math.random() * 20),
+        });
+      }
+
+      if (anomaly.lifetime >= anomaly.maxLifetime) {
+        activeAnomalyRef.current = null;
+        addCombatLogMessage("🌀 SYSTEM: Gravitační anomálie se bezpečně rozplynula v časoprostoru.", "#a855f7");
+      }
+    }
+
+    // --- RANDOM SPACE EVENTS SCHEDULER TICK ---
+    const nowTime = Date.now();
+    if (nowTime - lastEventTimeRef.current >= 35000) {
+      lastEventTimeRef.current = nowTime;
+      triggerRandomSpaceEvent();
+    }
+
     // --- SHIELD REGENERATION FOR ALL ALIVE CHARGED PLAYERS ---
     if (shieldRegenCooldown.current > 0) {
       shieldRegenCooldown.current--;
@@ -2906,6 +2997,7 @@ export default function App() {
               }
             }
             playDamageSound();
+            triggerCameraShake(6);
             pl.lifetime = pl.maxLifetime; // mark dead
           }
         }
@@ -3125,6 +3217,31 @@ export default function App() {
             return nextStats;
           });
           awardLabel = `${pName}: +2 Obsidiány (+${scoreAdded} skóre!)`;
+        } else if (ore.type as string === 'cargo') {
+          scoreAdded = Math.round(55000 * multiplier);
+          
+          const crCount = 15 + Math.floor(Math.random() * 11);
+          const diCount = 6 + Math.floor(Math.random() * 7);
+          const obCount = 3 + Math.floor(Math.random() * 5);
+          
+          setRunCrystals(c => c + crCount);
+          setRunDiamonds(d => d + diCount);
+          setRunObsidian(o => o + obCount);
+          
+          setStats(curr => {
+            const nextStats = {
+              ...curr,
+              crystals: curr.crystals + crCount,
+              diamonds: curr.diamonds + diCount,
+              obsidian: curr.obsidian + obCount
+            };
+            saveStats(nextStats);
+            return nextStats;
+          });
+          
+          awardLabel = `🎁 CARGO: +${crCount}💎 +${diCount}💠 +${obCount}🪨 (+${scoreAdded} skóre!)`;
+          addCombatLogMessage(`🎁 ${pName} otevřel ztracený cargo kontejner! Nalezeno: ${crCount} krystalů, ${diCount} diamantů, ${obCount} obsidiánů!`, '#facc15');
+          triggerCameraShake(4);
         }
 
         if (scoreAdded > 0) {
@@ -3725,6 +3842,7 @@ export default function App() {
             const calculatedDmg = Math.round(rawDmg * armorMultiplier * difficultyMultiplier);
 
             playDamageSound();
+            triggerCameraShake(Math.min(18, Math.max(5, calculatedDmg * 0.35)));
 
             let finalDmgToHull = calculatedDmg;
 
@@ -4351,6 +4469,14 @@ export default function App() {
     playExplosionSound(asteroid.size);
     triggerAsteroidPieceExplosionParticles(asteroid);
 
+    let shakeAmt = 3;
+    if (asteroid.size === 'colossal') shakeAmt = 15;
+    else if (asteroid.size === 'huge') shakeAmt = 10;
+    else if (asteroid.size === 'large') shakeAmt = 6;
+    else if (asteroid.size === 'medium') shakeAmt = 3;
+    else if (asteroid.size === 'small') shakeAmt = 1.5;
+    triggerCameraShake(shakeAmt);
+
     // 1. Add score with combo multiplier
     const now = Date.now();
     const timeDiff = now - lastAsteroidDestroyedTimeRef.current;
@@ -4491,6 +4617,85 @@ export default function App() {
     }
   };
 
+  // --- SYSTEM OF RANDOM SPACE EVENTS ---
+  const triggerRandomSpaceEvent = () => {
+    let eventRoll = Math.floor(Math.random() * 3);
+    
+    if (!enemiesEnabledRef.current && eventRoll === 2) {
+      eventRoll = Math.floor(Math.random() * 2);
+    }
+    
+    const livingPlayer = playersRef.current.find(p => p.hull > 0);
+    if (!livingPlayer) return;
+    
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 450 + Math.random() * 200;
+    const spawnX = livingPlayer.x + Math.cos(angle) * dist;
+    const spawnY = livingPlayer.y + Math.sin(angle) * dist;
+    
+    if (eventRoll === 0) {
+      const container: Ore = {
+        id: 'cargo_' + Math.random().toString(36).substring(2, 9),
+        x: spawnX,
+        y: spawnY,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: (Math.random() - 0.5) * 1.5,
+        type: 'cargo' as any,
+        color: '#facc15',
+        radius: 13,
+        pulseScale: 1.0,
+        pulseDir: 1
+      };
+      
+      oresRef.current.push(container);
+      addCombatLogMessage("📦 VESMÍRNÁ UDÁLOST: Detekován nouzový signál opuštěného nákladního kontejneru!", "#facc15");
+      addGainNotification("🎁 Nalezen ztracený cargo kontejner! Přitáhni ho magnetem!", "#facc15");
+      triggerCameraShake(2);
+      
+    } else if (eventRoll === 1) {
+      activeAnomalyRef.current = {
+        x: spawnX,
+        y: spawnY,
+        radius: 350,
+        lifetime: 0,
+        maxLifetime: 600
+      };
+      
+      addCombatLogMessage("🌀 VESMÍRNÁ UDÁLOST: V sektoru se vytvořila nestabilní gravitační anomálie!", "#a855f7");
+      addGainNotification("🌀 Gravitační anomálie detekována! Pozor na silný tah!", "#c084fc");
+      playExplosionSound('medium');
+      triggerCameraShake(8);
+      
+    } else if (eventRoll === 2) {
+      const droneCount = difficultyRef.current === 'easy' ? 2 : difficultyRef.current === 'medium' ? 3 : 4;
+      const baseHp = Math.round(55 * (difficultyRef.current === 'easy' ? 0.7 : difficultyRef.current === 'medium' ? 1.0 : 1.4));
+      
+      for (let i = 0; i < droneCount; i++) {
+        const dAngle = angle + (i - (droneCount - 1) / 2) * 0.35;
+        const dX = livingPlayer.x + Math.cos(dAngle) * dist;
+        const dY = livingPlayer.y + Math.sin(dAngle) * dist;
+        
+        piratesRef.current.push({
+          id: 'drone_' + Math.random().toString(36).substring(2, 9),
+          x: dX,
+          y: dY,
+          vx: (Math.random() - 0.5) * 2,
+          vy: (Math.random() - 0.5) * 2,
+          angle: Math.random() * Math.PI * 2,
+          hp: baseHp,
+          maxHp: baseHp,
+          radius: 12,
+          lastFired: 0,
+          color: '#a855f7'
+        });
+      }
+      
+      addCombatLogMessage("🚨 VESMÍRNÁ UDÁLOST: Přepadová skupina autonomních těžařských dronů zachytila naše signály!", "#ef4444");
+      addGainNotification("🤖 Pozor, útok nepřátelských dronů! Znič je pro extra krystaly!", "#f43f5e");
+      triggerCameraShake(4);
+    }
+  };
+
   // --- VISUAL EFFECT PARTICLE EMITTERS ---
   const triggerAsteroidPieceExplosionParticles = (asteroid: Asteroid) => {
     const particleCount = asteroid.size === 'colossal' ? 65 : asteroid.size === 'huge' ? 40 : asteroid.size === 'large' ? 25 : 12;
@@ -4553,8 +4758,16 @@ export default function App() {
         targetCamY -= Math.sin(focusPlayer.angle) * 80;
       }
 
-      const camX = targetCamX - vw / 2;
-      const camY = targetCamY - vh / 2;
+      let shakeX = 0;
+      let shakeY = 0;
+      if (cameraShakeRef.current > 0.1) {
+        shakeX = (Math.random() - 0.5) * cameraShakeRef.current;
+        shakeY = (Math.random() - 0.5) * cameraShakeRef.current;
+        cameraShakeRef.current *= 0.93;
+      }
+
+      const camX = targetCamX - vw / 2 + shakeX;
+      const camY = targetCamY - vh / 2 + shakeY;
 
       ctx.save();
       
@@ -4654,24 +4867,58 @@ export default function App() {
         ctx.translate(sx, sy);
         ctx.scale(ore.pulseScale, ore.pulseScale);
         
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = ore.color;
-        ctx.fillStyle = ore.color;
+        if (ore.type as string === 'cargo') {
+          // Draw a cool high-tech cargo container box with warning stripes
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#eab308';
+          
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#eab308';
+          ctx.fillStyle = '#0f172a';
+          
+          ctx.beginPath();
+          ctx.rect(-ore.radius * 1.3, -ore.radius * 0.9, ore.radius * 2.6, ore.radius * 1.8);
+          ctx.fill();
+          ctx.stroke();
+          
+          // Draw a yellow center lock
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(-ore.radius * 0.4, -ore.radius * 0.4, ore.radius * 0.8, ore.radius * 0.8);
+          
+          // Draw warning stripes on sides
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(-ore.radius * 1.1, -ore.radius * 0.7);
+          ctx.lineTo(-ore.radius * 0.8, -ore.radius * 0.3);
+          ctx.moveTo(ore.radius * 0.8, -ore.radius * 0.7);
+          ctx.lineTo(ore.radius * 1.1, -ore.radius * 0.3);
+          ctx.stroke();
 
-        ctx.beginPath();
-        ctx.moveTo(0, -ore.radius);
-        ctx.lineTo(ore.radius * 0.8, -ore.radius * 0.3);
-        ctx.lineTo(ore.radius * 0.5, ore.radius * 0.8);
-        ctx.lineTo(0, ore.radius);
-        ctx.lineTo(-ore.radius * 0.5, ore.radius * 0.8);
-        ctx.lineTo(-ore.radius * 0.8, -ore.radius * 0.3);
-        ctx.closePath();
-        ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText("🎁", 0, -ore.radius * 1.3);
+        } else {
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = ore.color;
+          ctx.fillStyle = ore.color;
 
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(-ore.radius * 0.2, -ore.radius * 0.2, ore.radius * 0.25, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(0, -ore.radius);
+          ctx.lineTo(ore.radius * 0.8, -ore.radius * 0.3);
+          ctx.lineTo(ore.radius * 0.5, ore.radius * 0.8);
+          ctx.lineTo(0, ore.radius);
+          ctx.lineTo(-ore.radius * 0.5, ore.radius * 0.8);
+          ctx.lineTo(-ore.radius * 0.8, -ore.radius * 0.3);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(-ore.radius * 0.2, -ore.radius * 0.2, ore.radius * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         ctx.restore();
       });
@@ -5054,6 +5301,91 @@ export default function App() {
 
         ctx.restore();
       });
+
+      // --- DRAW SPATIAL ANOMALY ---
+      if (activeAnomalyRef.current) {
+        const anomaly = activeAnomalyRef.current;
+        const ax = anomaly.x - camX;
+        const ay = anomaly.y - camY;
+        
+        ctx.save();
+        ctx.translate(ax, ay);
+        ctx.rotate(Date.now() * 0.0018);
+        
+        const r = 70 + Math.sin(Date.now() / 150) * 8;
+        
+        for (let i = 3; i > 0; i--) {
+          const alpha = 0.06 * i;
+          ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * (1 + i * 0.28), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        
+        const grad = ctx.createRadialGradient(0, 0, r * 0.1, 0, 0, r);
+        grad.addColorStop(0, '#090514');
+        grad.addColorStop(0.4, '#581c87');
+        grad.addColorStop(0.8, '#a855f7');
+        grad.addColorStop(1, 'rgba(168, 85, 247, 0)');
+        
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.45)';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        for (let j = 0; j < 4; j++) {
+          const startAngle = (j * Math.PI * 2) / 4;
+          ctx.moveTo(0, 0);
+          for (let step = 0; step < 25; step++) {
+            const stepAng = startAngle + step * 0.15;
+            const stepRad = (step / 25) * r;
+            ctx.lineTo(Math.cos(stepAng) * stepRad, Math.sin(stepAng) * stepRad);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+        
+        const pvx = focusPlayer.x - camX;
+        const pvy = focusPlayer.y - camY;
+        if (ax < 0 || ax > vw || ay < 0 || ay > vh) {
+          const dx = ax - pvx;
+          const dy = ay - pvy;
+          const angleToAnomaly = Math.atan2(dy, dx);
+          const arrowDist = Math.min(vw, vh) * 0.42;
+          const arrowX = pvx + Math.cos(angleToAnomaly) * arrowDist;
+          const arrowY = pvy + Math.sin(angleToAnomaly) * arrowDist;
+          
+          ctx.save();
+          ctx.translate(arrowX, arrowY);
+          ctx.rotate(angleToAnomaly);
+          
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = '#c084fc';
+          ctx.fillStyle = '#a855f7';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.0;
+          
+          ctx.beginPath();
+          ctx.moveTo(12, 0);
+          ctx.lineTo(-6, -7);
+          ctx.lineTo(-3, 0);
+          ctx.lineTo(-6, 7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          
+          ctx.rotate(-angleToAnomaly);
+          ctx.fillStyle = '#c084fc';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText("🌀 ANOMÁLIE", 0, 18);
+          ctx.restore();
+        }
+      }
 
       // --- DRAW COSMIC WORMHOLE ---
       if (wormholeRef.current) {
@@ -6341,11 +6673,14 @@ export default function App() {
       )}
 
       {/* 4. INTRO PORTAL GREETING SCREEN (START SCREEN) */}
-      {showIntro && (
-        <div 
-          className="absolute inset-0 z-30 bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 text-slate-100 overflow-y-auto"
-          id="space-intro-portal"
-        >
+      <AnimatePresence>
+        {showIntro && (
+          <motion.div 
+            initial={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.4, ease: "easeInOut" } }}
+            className="absolute inset-0 z-30 bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 text-slate-100 overflow-y-auto"
+            id="space-intro-portal"
+          >
           {/* Constellation backplate graphics */}
           <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#1e293b_1.5px,transparent_1.5px)] [background-size:24px_24px] pointer-events-none" />
 
@@ -6736,8 +7071,9 @@ export default function App() {
             )}
 
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* 5. GAME OVER DIALOG CARD OVERLAY */}
       {isGameOver && (

@@ -9,7 +9,7 @@ export interface Vector2D {
 }
 
 export type AsteroidSize = 'colossal' | 'huge' | 'large' | 'medium' | 'small';
-export type OreType = 'crystal' | 'diamond' | 'obsidian';
+export type OreType = 'crystal' | 'diamond' | 'obsidian' | 'cargo';
 
 export interface Asteroid {
   id: string;
