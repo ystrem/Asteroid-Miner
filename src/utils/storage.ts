@@ -25,12 +25,25 @@ const DEFAULT_UPGRADES: Upgrades = {
   quantumMirrorLevel: 0,
   toxicTrailLevel: 0,
   salvageMagnetLevel: 0,
+  
+  // Carrier defaults
+  carrierClass: 'none',
+  carrierHullLevel: 0,
+  carrierShieldLevel: 0,
+  carrierEngineLevel: 0,
+  carrierWeaponSlotLevel: 0,
+  carrierWeaponDamageLevel: 1,
+  carrierHyperfuelTankLevel: 1,
+  carrierHyperdriveRangeLevel: 1,
+  carrierRepairBayLevel: 0,
+  carrierCargoHoldLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {
   crystals: 0,
   diamonds: 0,
   obsidian: 0,
+  deuterium: 0, // New fuel resource
   highScore: 0,
   totalAsteroidsMined: 0,
   prestigeCount: 0,

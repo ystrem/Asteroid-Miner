@@ -17,6 +17,7 @@ import {
   AsteroidSize,
   OreType,
   Player,
+  CarrierClass,
   Pirate,
   PirateLaser,
   SockEntity,
@@ -49,6 +50,7 @@ import {
 } from './utils/storage';
 import UpgradeShop from './components/UpgradeShop';
 import AsteroidExplorer from './components/AsteroidExplorer';
+import { generateSectors, Sector, SectorType } from './data/sectors';
 import { 
   Swords, 
   Shield, 
@@ -71,7 +73,10 @@ import {
   User,
   Users,
   Skull,
-  Cpu
+  Cpu,
+  Map,
+  Ship,
+  Flame
 } from 'lucide-react';
 
 // Optimize performance by patching canvas shadowBlur setter once globally
@@ -162,6 +167,25 @@ export default function App() {
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [showIntro, setShowIntro] = useState<boolean>(true);
   const [isShopOpen, setIsShopOpen] = useState<boolean>(false);
+  const [sectors, setSectors] = useState<Sector[]>(() => {
+    const baseSectors = generateSectors();
+    try {
+      const savedDiscovered = localStorage.getItem('asteroid_miner_discovered_sectors');
+      if (savedDiscovered) {
+        const discoveredIds = JSON.parse(savedDiscovered) as string[];
+        return baseSectors.map(s => discoveredIds.includes(s.id) ? { ...s, discovered: true } : s);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return baseSectors;
+  });
+  const [currentSectorId, setCurrentSectorId] = useState<string>(() => {
+    return localStorage.getItem('asteroid_miner_current_sector_id') || 'sector_2_2';
+  });
+  const [isMapOpen, setIsMapOpen] = useState<boolean>(false);
+  const [selectedMapSector, setSelectedMapSector] = useState<Sector | null>(null);
+  const [dockedPlayerIds, setDockedPlayerIds] = useState<string[]>([]);
   const [isMuted, setIsMuted] = useState<boolean>(!getSoundState());
   const [showHowTo, setShowHowTo] = useState<boolean>(false);
   const [gameMode, setGameMode] = useState<'single' | 'coop'>('single');
@@ -286,6 +310,50 @@ export default function App() {
   const superMagnetActiveRef = useRef<number>(0);
   const sockCooldownRef = useRef<number>(0);
   const isBossFightActiveRef = useRef<boolean>(false);
+
+  const carrierRef = useRef<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    hp: number;
+    maxHp: number;
+    shield: number;
+    maxShield: number;
+    dockedPlayerIds: string[];
+    radius: number;
+  }>({
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    angle: -Math.PI / 2,
+    hp: 1000,
+    maxHp: 1000,
+    shield: 500,
+    maxShield: 500,
+    dockedPlayerIds: [],
+    radius: 75,
+  });
+
+  const sectorsRef = useRef<Sector[]>(sectors);
+  const currentSectorIdRef = useRef<string>(currentSectorId);
+  const dockedPlayerIdsRef = useRef<string[]>([]);
+  const lastCarrierFiredRef = useRef<number>(0);
+
+  useEffect(() => {
+    sectorsRef.current = sectors;
+  }, [sectors]);
+
+  useEffect(() => {
+    currentSectorIdRef.current = currentSectorId;
+  }, [currentSectorId]);
+
+  useEffect(() => {
+    dockedPlayerIdsRef.current = dockedPlayerIds;
+    carrierRef.current.dockedPlayerIds = dockedPlayerIds;
+  }, [dockedPlayerIds]);
 
   const cameraShakeRef = useRef<number>(0);
   const triggerCameraShake = (intensity: number) => {
@@ -990,6 +1058,29 @@ export default function App() {
     asteroidsRef.current = list;
   };
 
+  const getCarrierBaseStats = (cClass: CarrierClass) => {
+    switch (cClass) {
+      case 'cargo': return { hp: 500, shield: 100, slots: 1, speed: 0.8, range: 1, maxFuel: 10 };
+      case 'mining': return { hp: 800, shield: 150, slots: 1, speed: 0.9, range: 2, maxFuel: 15 };
+      case 'war': return { hp: 1200, shield: 250, slots: 3, speed: 1.2, range: 2, maxFuel: 20 };
+      case 'dreadnought': return { hp: 2500, shield: 500, slots: 5, speed: 1.1, range: 3, maxFuel: 30 };
+      case 'stargate': return { hp: 2000, shield: 400, slots: 3, speed: 0.8, range: 4, maxFuel: 40 };
+      default: return { hp: 0, shield: 0, slots: 0, speed: 0, range: 0, maxFuel: 0 };
+    }
+  };
+
+  const getCarrierMaxHp = (cClass: CarrierClass, hullLvl: number) => {
+    const base = getCarrierBaseStats(cClass).hp;
+    const bonus = hullLvl === 1 ? 200 : hullLvl === 2 ? 400 : hullLvl === 3 ? 600 : hullLvl === 4 ? 900 : hullLvl === 5 ? 1400 : 0;
+    return base + bonus;
+  };
+
+  const getCarrierMaxShield = (cClass: CarrierClass, shieldLvl: number) => {
+    const base = getCarrierBaseStats(cClass).shield;
+    const bonus = shieldLvl === 1 ? 150 : shieldLvl === 2 ? 300 : shieldLvl === 3 ? 500 : shieldLvl === 4 ? 800 : shieldLvl === 5 ? 1200 : 0;
+    return base + bonus;
+  };
+
   // --- LAUNCH GAME RUN ---
   const handleStartGame = (startBossFight: boolean = false) => {
     selectedMapRef.current = selectedMap;
@@ -1115,6 +1206,29 @@ export default function App() {
     // Reset tracking refs for a clean run
     gamepadOnlyStartRef.current = null;
     keyboardOrMousePressedRef.current = false;
+
+    // Initialize Carrier if purchased
+    if (upgrades.carrierClass !== 'none') {
+      const carrierMaxHp = getCarrierMaxHp(upgrades.carrierClass, upgrades.carrierHullLevel);
+      const carrierMaxShield = getCarrierMaxShield(upgrades.carrierClass, upgrades.carrierShieldLevel);
+      carrierRef.current = {
+        x: 0,
+        y: 200,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        hp: carrierMaxHp,
+        maxHp: carrierMaxHp,
+        shield: carrierMaxShield,
+        maxShield: carrierMaxShield,
+        dockedPlayerIds: [],
+        radius: 75,
+      };
+      setDockedPlayerIds([]);
+    } else {
+      carrierRef.current.dockedPlayerIds = [];
+      setDockedPlayerIds([]);
+    }
 
     setActivePlayers([...playersRef.current]);
 
@@ -1319,6 +1433,159 @@ export default function App() {
     playUpgradeSound();
   };
 
+  const handleBuyDeuterium = (cost: number, amount: number) => {
+    if (stats.diamonds < cost) return;
+
+    const updatedStats = {
+      ...stats,
+      diamonds: stats.diamonds - cost,
+      deuterium: (stats.deuterium || 0) + amount,
+    };
+
+    setStats(updatedStats);
+    saveStats(updatedStats);
+
+    addGainNotification(`ZAKOUPENO DEUTERIUM: +${amount} j.`, '#a855f7');
+    playUpgradeSound();
+  };
+
+  const handleBuyCarrierClass = (carrierClass: CarrierClass, costs: { crystals: number; diamonds: number; obsidian: number }) => {
+    if (stats.crystals < costs.crystals || stats.diamonds < costs.diamonds || stats.obsidian < costs.obsidian) return;
+
+    const updatedStats = {
+      ...stats,
+      crystals: stats.crystals - costs.crystals,
+      diamonds: stats.diamonds - costs.diamonds,
+      obsidian: stats.obsidian - costs.obsidian,
+    };
+
+    const updatedUpgrades = {
+      ...upgrades,
+      carrierClass,
+      carrierHullLevel: 1,
+      carrierShieldLevel: 1,
+      carrierEngineLevel: 1,
+      carrierWeaponSlotLevel: 1,
+      carrierWeaponDamageLevel: 1,
+      carrierHyperfuelTankLevel: 1,
+      carrierHyperdriveRangeLevel: 1,
+      carrierRepairBayLevel: 0,
+      carrierCargoHoldLevel: 0,
+    };
+
+    setStats(updatedStats);
+    setUpgrades(updatedUpgrades);
+    saveStats(updatedStats);
+    saveUpgrades(updatedUpgrades);
+
+    addGainNotification(`ZAKOUPENA MATEŘSKÁ LOĎ!`, '#eab308');
+    playUpgradeSound();
+  };
+
+  const handleExecuteHyperjump = (targetSector: Sector) => {
+    if ((stats.deuterium || 0) < 1) {
+      addGainNotification('❌ Nedostatek Deuterium! Kupte ho v Carrier Docku.', '#ef4444');
+      return;
+    }
+
+    const updatedStats = {
+      ...stats,
+      deuterium: (stats.deuterium || 0) - 1,
+    };
+    setStats(updatedStats);
+    saveStats(updatedStats);
+    statsRef.current = updatedStats;
+
+    const updatedSectors = sectors.map(s => s.id === targetSector.id ? { ...s, discovered: true } : s);
+    setSectors(updatedSectors);
+    sectorsRef.current = updatedSectors;
+    localStorage.setItem('asteroid_miner_discovered_sectors', JSON.stringify(updatedSectors.filter(s => s.discovered).map(s => s.id)));
+
+    setCurrentSectorId(targetSector.id);
+    currentSectorIdRef.current = targetSector.id;
+    localStorage.setItem('asteroid_miner_current_sector_id', targetSector.id);
+
+    let targetMap = 'silicon';
+    if (targetSector.type === 'magma') targetMap = 'magma';
+    else if (targetSector.type === 'ice') targetMap = 'ice';
+    else if (targetSector.type === 'gold') targetMap = 'gold';
+
+    setSelectedMap(targetMap);
+    selectedMapRef.current = targetMap;
+
+    playUpgradeSound();
+    triggerCameraShake(25);
+    addGainNotification(`🌌 WARP SKOK DO SEKTORU: ${targetSector.name.toUpperCase()}!`, '#a855f7');
+
+    const carrier = carrierRef.current;
+    if (upgrades.carrierClass !== 'none') {
+      carrier.x = 0;
+      carrier.y = 0;
+      carrier.vx = 0;
+      carrier.vy = 0;
+    }
+
+    playersRef.current.forEach(p => {
+      p.x = 0;
+      p.y = 0;
+      p.vx = 0;
+      p.vy = 0;
+      p.anchoredAsteroidId = undefined;
+      p.isDrilling = false;
+    });
+
+    asteroidsRef.current = [];
+    oresRef.current = [];
+    piratesRef.current = [];
+    lasersRef.current = [];
+    particlesRef.current = [];
+    lavaProjectilesRef.current = [];
+    blizzardZonesRef.current = [];
+    bossGuidedFireballsRef.current = [];
+    bossFreezingPulsesRef.current = [];
+    bossEscortDronesRef.current = [];
+    emStormTimerRef.current = 0;
+    emStormActiveRef.current = false;
+
+    populateAsteroidBelt(targetSector.asteroidDensity || 15);
+
+    if (targetSector.bossId) {
+      isBossFightActiveRef.current = true;
+      setIsBossFightActive(true);
+      setBossHp(1000);
+      setBossMaxHp(1000);
+      setBossLives(6);
+      setBossMaxLives(6);
+
+      bossRef.current = {
+        x: 0,
+        y: -350,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        hp: 1000,
+        maxHp: 1000,
+        radius: 95,
+        state: 'intro',
+        lastFired: 0,
+        lastShieldFired: 0,
+        lastValuableMove: Date.now() + 4500,
+        lives: 6,
+        maxLives: 6,
+        healVisualTimer: 0,
+        hitCount: 0,
+      };
+
+      addGainNotification('⚠️ OMÉGA KORZÁR ZAÚTOČIL NA VAŠI MATEŘSKOU LOĎ!', '#ef4444');
+    } else {
+      isBossFightActiveRef.current = false;
+      setIsBossFightActive(false);
+      bossRef.current = null;
+    }
+
+    setIsMapOpen(false);
+  };
+
   // --- SURFACE EXPLORATION ATOM EXPLORER SYSTEM IMPLEMENTATION ---
   const findAnchoredAsteroid = () => {
     const p = playersRef.current.find(pl => pl.anchoredAsteroidId);
@@ -1403,7 +1670,7 @@ export default function App() {
     isDecisionOpenRef.current = false;
 
     // Trigger "New Game Plus" / Prestige Reset of upgrades and return to normal mining world!
-    const cleanUpgrades = {
+    const cleanUpgrades: Upgrades = {
       laserLevel: 1,
       magnetLevel: 1,
       hullLevel: 1,
@@ -1420,6 +1687,16 @@ export default function App() {
       quantumMirrorLevel: 0,
       toxicTrailLevel: 0,
       salvageMagnetLevel: 0,
+      carrierClass: 'none',
+      carrierHullLevel: 0,
+      carrierShieldLevel: 0,
+      carrierEngineLevel: 0,
+      carrierWeaponSlotLevel: 0,
+      carrierWeaponDamageLevel: 1,
+      carrierHyperfuelTankLevel: 1,
+      carrierHyperdriveRangeLevel: 1,
+      carrierRepairBayLevel: 0,
+      carrierCargoHoldLevel: 0,
     };
 
     setUpgrades(cleanUpgrades);
@@ -1993,12 +2270,337 @@ export default function App() {
       }
     }
 
+    // --- CARRIER PHYSICS & LOGIC ---
+    const hasCarrier = upgradesRef.current.carrierClass !== 'none';
+    const carrier = carrierRef.current;
     let isAnyPlayerThrusting = false;
+
+    if (hasCarrier) {
+      // Find driver (the first docked player)
+      const driverId = dockedPlayerIdsRef.current[0];
+      const driver = driverId ? playersRef.current.find(pl => pl.id === driverId) : null;
+
+      let carrierThrust = false;
+      let carrierReverse = false;
+      let carrierTurn = 0; // -1 for left, 1 for right
+      let carrierFired = false;
+
+      if (driver && driver.hull > 0) {
+        if (driver.inputSource === 'keyboard_p1') {
+          carrierThrust = !!keysPressed.current['ArrowUp'];
+          carrierReverse = !!keysPressed.current['ArrowDown'];
+          if (keysPressed.current['ArrowLeft']) carrierTurn = -1;
+          if (keysPressed.current['ArrowRight']) carrierTurn = 1;
+          if (keysPressed.current['ControlRight'] || keysPressed.current['Space']) carrierFired = true;
+        } else if (driver.inputSource === 'keyboard_p2') {
+          carrierThrust = !!keysPressed.current['KeyW'];
+          carrierReverse = !!keysPressed.current['KeyS'];
+          if (keysPressed.current['KeyA']) carrierTurn = -1;
+          if (keysPressed.current['KeyD']) carrierTurn = 1;
+          if (keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || keysPressed.current['Space']) carrierFired = true;
+        } else if (driver.inputSource === 'gamepad' && driver.gamepadIndex !== null) {
+          const gp = gamepads[driver.gamepadIndex];
+          if (gp) {
+            const lX = gp.axes[0] || 0;
+            const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
+            carrierThrust = isLTPressed;
+            if (Math.abs(lX) > 0.22) {
+              carrierTurn = lX > 0 ? 1 : -1;
+            }
+            if (gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15) {
+              carrierFired = true;
+            }
+          }
+        }
+      }
+
+      // Check if other docked players are trying to shoot
+      playersRef.current.forEach(pl => {
+        if (pl.hull > 0 && pl.id !== driverId && dockedPlayerIdsRef.current.includes(pl.id)) {
+          let otherFired = false;
+          if (pl.inputSource === 'keyboard_p1') {
+            otherFired = !!keysPressed.current['ControlRight'] || !!keysPressed.current['Space'];
+          } else if (pl.inputSource === 'keyboard_p2') {
+            otherFired = !!keysPressed.current['ControlLeft'] || !!keysPressed.current['KeyF'] || !!keysPressed.current['Space'];
+          } else if (pl.inputSource === 'gamepad' && pl.gamepadIndex !== null) {
+            const gp = gamepads[pl.gamepadIndex];
+            if (gp) {
+              otherFired = gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15;
+            }
+          }
+          if (otherFired) carrierFired = true;
+        }
+      });
+
+      // Synchronize specifications based on Class and Upgrades
+      const baseStats = getCarrierBaseStats(upgradesRef.current.carrierClass);
+      const maxHp = getCarrierMaxHp(upgradesRef.current.carrierClass, upgradesRef.current.carrierHullLevel);
+      const maxShield = getCarrierMaxShield(upgradesRef.current.carrierClass, upgradesRef.current.carrierShieldLevel);
+
+      carrier.maxHp = maxHp;
+      carrier.maxShield = maxShield;
+
+      // Keep HP and Shield within bounds
+      if (carrier.hp > maxHp) carrier.hp = maxHp;
+      if (carrier.shield > maxShield) carrier.shield = maxShield;
+
+      // Movement equations
+      const speedMult = baseStats.speed + (upgradesRef.current.carrierEngineLevel - 1) * 0.12;
+      const turnMult = 0.035 + (upgradesRef.current.carrierEngineLevel - 1) * 0.005;
+
+      if (carrierTurn !== 0) {
+        carrier.angle += carrierTurn * turnMult;
+      }
+
+      const accel = 0.045 * speedMult;
+      const maxSpeed = 3.5 * speedMult;
+
+      if (carrierThrust) {
+        carrier.vx += Math.cos(carrier.angle) * accel;
+        carrier.vy += Math.sin(carrier.angle) * accel;
+        isAnyPlayerThrusting = true;
+
+        // Exhaust flame particles
+        if (Math.random() < 0.7) {
+          const exhaustAngle = carrier.angle + Math.PI + (Math.random() * 0.3 - 0.15);
+          const exX = carrier.x - Math.cos(carrier.angle) * carrier.radius;
+          const exY = carrier.y - Math.sin(carrier.angle) * carrier.radius;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: exX,
+            y: exY,
+            vx: Math.cos(exhaustAngle) * (Math.random() * 3 + 4) + carrier.vx,
+            vy: Math.sin(exhaustAngle) * (Math.random() * 3 + 4) + carrier.vy,
+            color: '#f97316', // orange rocket fuel
+            size: Math.random() * 7 + 4,
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 25 + Math.floor(Math.random() * 15)
+          });
+        }
+      } else if (carrierReverse) {
+        carrier.vx -= Math.cos(carrier.angle) * (accel * 0.5);
+        carrier.vy -= Math.sin(carrier.angle) * (accel * 0.5);
+      }
+
+      // Physics damping
+      carrier.vx *= 0.985;
+      carrier.vy *= 0.985;
+
+      const speed = Math.hypot(carrier.vx, carrier.vy);
+      if (speed > maxSpeed) {
+        carrier.vx = (carrier.vx / speed) * maxSpeed;
+        carrier.vy = (carrier.vy / speed) * maxSpeed;
+      }
+
+      // Update positions
+      carrier.x += carrier.vx;
+      carrier.y += carrier.vy;
+
+      // Shield passive recovery
+      if (carrier.shield < carrier.maxShield) {
+        carrier.shield += 0.04 + (upgradesRef.current.carrierShieldLevel * 0.02);
+      }
+
+      // Keep Carrier reasonably bounded inside some safe radius or wrap him
+      const boundary = 3200;
+      const distFromCenter = Math.hypot(carrier.x, carrier.y);
+      if (distFromCenter > boundary) {
+        const pullAngle = Math.atan2(carrier.y, carrier.x) + Math.PI;
+        carrier.vx += Math.cos(pullAngle) * 0.2;
+        carrier.vy += Math.sin(pullAngle) * 0.2;
+      }
+
+      // Automated Defensive Turrets (Firing)
+      if (carrierFired && Date.now() - lastCarrierFiredRef.current > 220) {
+        lastCarrierFiredRef.current = Date.now();
+        playLaserSound(0.85); // deep heavy hyperlaser sound
+
+        const slotLvl = upgradesRef.current.carrierWeaponSlotLevel || 1;
+        const threats = [
+          ...asteroidsRef.current.map(a => ({ x: a.x, y: a.y, radius: a.radius, isAsteroid: true })),
+          ...piratesRef.current.map(pir => ({ x: pir.x, y: pir.y, radius: pir.radius, isAsteroid: false }))
+        ];
+
+        threats.sort((a, b) => {
+          const distA = Math.hypot(a.x - carrier.x, a.y - carrier.y);
+          const distB = Math.hypot(b.x - carrier.x, b.y - carrier.y);
+          return distA - distB;
+        });
+
+        // Target closest threats in 650px range
+        const targets = threats.filter(t => Math.hypot(t.x - carrier.x, t.y - carrier.y) < 650).slice(0, slotLvl);
+
+        for (let i = 0; i < slotLvl; i++) {
+          let shootAngle = carrier.angle;
+          if (targets[i]) {
+            shootAngle = Math.atan2(targets[i].y - carrier.y, targets[i].x - carrier.x);
+          } else {
+            // Spread default arcs around front
+            const spreadAngle = 0.22;
+            shootAngle = carrier.angle + (i - (slotLvl - 1) / 2) * spreadAngle;
+          }
+
+          const cos = Math.cos(shootAngle);
+          const sin = Math.sin(shootAngle);
+          const baseDmg = 15 + (upgradesRef.current.carrierWeaponDamageLevel - 1) * 8;
+
+          const carrierLaser: Laser = {
+            id: Math.random().toString(36).substring(2, 9),
+            x: carrier.x + cos * (carrier.radius - 10),
+            y: carrier.y + sin * (carrier.radius - 10),
+            vx: cos * 10,
+            vy: sin * 10,
+            angle: shootAngle,
+            damage: baseDmg,
+            isPiercing: slotLvl >= 3,
+            piercedAsteroidIds: [],
+            radius: 8,
+            width: 6,
+            color: '#fbbf24', // Golden beam
+            lifetime: 0,
+            maxLifetime: 100
+          };
+          lasersRef.current.push(carrierLaser);
+        }
+      }
+
+      // Check Dock/Undock keys and proximity for alive players
+      playersRef.current.forEach(p => {
+        if (p.hull <= 0) return;
+
+        const isDocked = dockedPlayerIdsRef.current.includes(p.id);
+
+        let dockTriggered = false;
+        if (p.inputSource === 'keyboard_p1') {
+          const pressed = !!keysPressed.current['ShiftRight'] || !!keysPressed.current['KeyE'];
+          const pressKey = `key_${p.id}_dock`;
+          const wasPressed = !!lastGamepadButtonsRef.current[pressKey];
+          lastGamepadButtonsRef.current[pressKey] = pressed;
+          if (pressed && !wasPressed) dockTriggered = true;
+        } else if (p.inputSource === 'keyboard_p2') {
+          const pressed = !!keysPressed.current['ShiftLeft'] || !!keysPressed.current['KeyE'];
+          const pressKey = `key_${p.id}_dock`;
+          const wasPressed = !!lastGamepadButtonsRef.current[pressKey];
+          lastGamepadButtonsRef.current[pressKey] = pressed;
+          if (pressed && !wasPressed) dockTriggered = true;
+        } else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
+          const gp = gamepads[p.gamepadIndex];
+          if (gp) {
+            const pressed = gp.buttons[5]?.pressed || false; // RB
+            const pressKey = `gp_${p.gamepadIndex}_btn_5_dock`;
+            const wasPressed = !!lastGamepadButtonsRef.current[pressKey];
+            lastGamepadButtonsRef.current[pressKey] = pressed;
+            if (pressed && !wasPressed) dockTriggered = true;
+          }
+        }
+
+        if (dockTriggered) {
+          if (isDocked) {
+            // UNDOCK
+            const newDocked = dockedPlayerIdsRef.current.filter(id => id !== p.id);
+            setDockedPlayerIds(newDocked);
+            dockedPlayerIdsRef.current = newDocked;
+
+            p.x = carrier.x + Math.cos(carrier.angle + Math.PI) * (carrier.radius + p.radius + 15);
+            p.y = carrier.y + Math.sin(carrier.angle + Math.PI) * (carrier.radius + p.radius + 15);
+            p.vx = Math.cos(carrier.angle + Math.PI) * 5;
+            p.vy = Math.sin(carrier.angle + Math.PI) * 5;
+            p.invulnerableTime = 60;
+
+            addGainNotification(`🚀 ${p.name} se odpojil z mateřské lodi!`, p.color);
+            playUpgradeSound();
+          } else {
+            // DOCK
+            const dx = p.x - carrier.x;
+            const dy = p.y - carrier.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < carrier.radius + p.radius + 60) {
+              const newDocked = [...dockedPlayerIdsRef.current, p.id];
+              setDockedPlayerIds(newDocked);
+              dockedPlayerIdsRef.current = newDocked;
+
+              p.vx = 0; p.vy = 0;
+              p.x = carrier.x; p.y = carrier.y;
+              p.anchoredAsteroidId = undefined;
+              p.isDrilling = false;
+
+              addGainNotification(`🚀 ${p.name} se zadokoval do mateřské lodi!`, p.color);
+              playUpgradeSound();
+            }
+          }
+        }
+      });
+
+      // Handle Ejection upon Carrier destruction
+      if (carrier.hp <= 0) {
+        addGainNotification('💥 MATEŘSKÁ LOĎ BYLA ZNIČENA! POSÁDKA KATAPULTOVÁNA!', '#ef4444');
+        playExplosionSound('huge');
+        triggerCameraShake(20);
+
+        playersRef.current.forEach(p => {
+          if (dockedPlayerIdsRef.current.includes(p.id)) {
+            const launchAngle = Math.random() * Math.PI * 2;
+            p.x = carrier.x + Math.cos(launchAngle) * 110;
+            p.y = carrier.y + Math.sin(launchAngle) * 110;
+            p.vx = Math.cos(launchAngle) * 8;
+            p.vy = Math.sin(launchAngle) * 8;
+            p.invulnerableTime = 120;
+            p.hull = Math.max(10, p.hull - 35); // Ejection damage
+          }
+        });
+
+        setDockedPlayerIds([]);
+        dockedPlayerIdsRef.current = [];
+        
+        // Let it slow-repair/respawn at 10% HP
+        carrier.hp = carrier.maxHp * 0.15;
+        carrier.shield = 0;
+      }
+
+      // Sync docked positions and apply passive repairs
+      playersRef.current.forEach(p => {
+        if (dockedPlayerIdsRef.current.includes(p.id)) {
+          p.x = carrier.x;
+          p.y = carrier.y;
+          p.vx = carrier.vx;
+          p.vy = carrier.vy;
+          p.invulnerableTime = Math.max(p.invulnerableTime, 5);
+
+          if (upgradesRef.current.carrierRepairBayLevel > 0 && Math.random() < 0.015) {
+            const heal = upgradesRef.current.carrierRepairBayLevel * 2.5;
+            if (p.hull < p.maxHull) {
+              p.hull = Math.min(p.maxHull, p.hull + heal);
+              // Green repair indicators
+              for (let i = 0; i < 3; i++) {
+                particlesRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: carrier.x + (Math.random() - 0.5) * 45,
+                  y: carrier.y + (Math.random() - 0.5) * 45,
+                  vx: (Math.random() - 0.5) * 1.5,
+                  vy: (Math.random() - 0.5) * 1.5,
+                  color: '#10b981',
+                  size: Math.random() * 3 + 1,
+                  alpha: 0.8,
+                  lifetime: 0,
+                  maxLifetime: 20
+                });
+              }
+            }
+          }
+        }
+      });
+    }
 
     // --- PROCESS INPUT FOR ALL ACTIVE PLAYERS ---
     playersRef.current.forEach(p => {
       p.thrusting = false;
       p.reversing = false;
+
+      // Skip normal physics input if currently docked inside Carrier
+      if (dockedPlayerIdsRef.current.includes(p.id)) {
+        return;
+      }
 
       if (p.hull > 0) {
         if (p.inputSource === 'keyboard_p1') {
@@ -6716,8 +7318,165 @@ export default function App() {
         ctx.restore();
       };
 
+      // --- DRAW CARRIER (MATEŘSKÁ LOĎ) ---
+      const hasCarrier = upgrades.carrierClass !== 'none';
+      const carrier = carrierRef.current;
+
+      if (hasCarrier) {
+        const cx = carrier.x - camX;
+        const cy = carrier.y - camY;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(carrier.angle);
+
+        // Draw massive rocket engine flames if moving/thrusting
+        const speed = Math.hypot(carrier.vx, carrier.vy);
+        if (speed > 0.15) {
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.moveTo(-carrier.radius + 15, -18);
+          ctx.lineTo(-carrier.radius - 25 - Math.random() * 20, 0);
+          ctx.lineTo(-carrier.radius + 15, 18);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#fb923c';
+          ctx.beginPath();
+          ctx.moveTo(-carrier.radius + 15, -10);
+          ctx.lineTo(-carrier.radius - 12 - Math.random() * 10, 0);
+          ctx.lineTo(-carrier.radius + 15, 10);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Draw Titanium-composite main Hull
+        ctx.strokeStyle = '#475569';
+        ctx.fillStyle = '#1e293b';
+        ctx.lineWidth = 3.5;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#020617';
+
+        ctx.beginPath();
+        // Pointy Nose section
+        ctx.moveTo(carrier.radius, 0);
+        // Top side fins
+        ctx.lineTo(-10, -carrier.radius + 20);
+        ctx.lineTo(-carrier.radius + 25, -carrier.radius + 25);
+        ctx.lineTo(-carrier.radius + 10, -25);
+        // Rear section
+        ctx.lineTo(-carrier.radius + 10, 25);
+        ctx.lineTo(-carrier.radius + 25, carrier.radius - 25);
+        ctx.lineTo(-10, carrier.radius - 20);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw glowing golden bridge/cockpit
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(carrier.radius * 0.45, -8);
+        ctx.lineTo(carrier.radius * 0.6, 0);
+        ctx.lineTo(carrier.radius * 0.45, 8);
+        ctx.lineTo(carrier.radius * 0.32, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        // Draw wing weapon pods and stripes
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(10, -24);
+        ctx.lineTo(-25, -45);
+        ctx.moveTo(10, 24);
+        ctx.lineTo(-25, 45);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Draw shimmering energy shield sphere
+        if (carrier.shield > 0) {
+          const shimmer = Math.sin(Date.now() / 140) * 0.03;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+          ctx.lineWidth = 4;
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = '#06b6d4';
+          ctx.beginPath();
+          ctx.arc(cx, cy, carrier.radius + 12, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(cx, cy, carrier.radius + 16 + shimmer * 120, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Draw Carrier dynamic health bars and status overlay
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const barW = 150;
+        const barH = 6;
+        const hpPercent = Math.max(0, carrier.hp / carrier.maxHp);
+
+        // Hull HP bar background
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+        ctx.fillRect(cx - barW / 2, cy - carrier.radius - 22, barW, barH);
+        // HP fill
+        ctx.fillStyle = hpPercent > 0.5 ? '#10b981' : hpPercent > 0.25 ? '#f59e0b' : '#ef4444';
+        ctx.fillRect(cx - barW / 2, cy - carrier.radius - 22, barW * hpPercent, barH);
+
+        // Shield bar
+        if (carrier.maxShield > 0) {
+          const shPercent = Math.max(0, carrier.shield / carrier.maxShield);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+          ctx.fillRect(cx - barW / 2, cy - carrier.radius - 14, barW, 4);
+          ctx.fillStyle = '#06b6d4';
+          ctx.fillRect(cx - barW / 2, cy - carrier.radius - 14, barW * shPercent, 4);
+        }
+
+        // Title text
+        ctx.font = '900 11px monospace';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#000000';
+        ctx.shadowBlur = 4;
+        ctx.fillText(`MATEŘSKÁ LOĎ: ${upgradesRef.current.carrierClass.toUpperCase()}`, cx, cy - carrier.radius - 36);
+
+        // Crew display list
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = '#38bdf8';
+        const crewNames = dockedPlayerIdsRef.current.map(id => {
+          const pl = playersRef.current.find(p => p.id === id);
+          return pl ? pl.name.split(' ')[0] : 'Kosmonaut';
+        });
+        const crewString = crewNames.length > 0 ? `Posádka: ${crewNames.join(', ')}` : '⚠️ BEZ POSÁDKY (PRÁZDNÝ DOK)';
+        ctx.fillText(crewString, cx, cy + carrier.radius + 22);
+
+        // Show prompt to non-docked nearby players
+        playersRef.current.forEach(p => {
+          if (p.hull > 0 && !dockedPlayerIdsRef.current.includes(p.id)) {
+            const dx = p.x - carrier.x;
+            const dy = p.y - carrier.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < carrier.radius + p.radius + 60) {
+              ctx.font = '900 10px monospace';
+              ctx.fillStyle = '#fb923c';
+              ctx.fillText('STISKNI [SHIFT / E] PRO DOKOVÁNÍ', p.x - camX, p.y - camY - p.radius - 18);
+            }
+          }
+        });
+
+        ctx.restore();
+      }
+
       playersRef.current.forEach(p => {
         if (p.hull > 0) {
+          // Skip drawing individual ship if docked inside the Carrier!
+          if (dockedPlayerIdsRef.current.includes(p.id)) return;
           const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
           drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
         } else {
@@ -7576,6 +8335,18 @@ export default function App() {
               <Zap className="w-4 h-4 fill-current" />
               Obchod (Dokovat)
             </button>
+            <button 
+              onClick={() => {
+                const cur = sectors.find(s => s.id === currentSectorId);
+                setSelectedMapSector(cur || sectors[0]);
+                setIsMapOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-violet-600/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+              id="hud-open-map-button"
+            >
+              <Map className="w-4 h-4" />
+              Sektorová Mapa 🌌
+            </button>
             <div className="flex gap-1">
               <button 
                 onClick={handleToggleMute}
@@ -8429,6 +9200,276 @@ export default function App() {
         </div>
       )}
 
+      {/* SEKTOROVÁ MAPA (5x5 GRID) */}
+      {isMapOpen && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 transition-all duration-300">
+          <div className="relative w-full max-w-5xl bg-slate-900/90 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-[90vh] md:h-auto md:max-h-[85vh]">
+            
+            {/* Left Column: Grid */}
+            <div className="w-full md:w-3/5 p-6 flex flex-col border-b md:border-b-0 md:border-r border-slate-800">
+              <div className="mb-4">
+                <h3 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400 uppercase tracking-wider flex items-center gap-2">
+                  <Map className="w-5 h-5 text-violet-400 animate-pulse" />
+                  Sektorový Navigační Systém
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Cestujte hyperpohonem mateřské lodi v mřížce 5x5 sektorů. Dosah hyperpohonu: <span className="text-violet-400 font-bold">{(upgrades.carrierHyperdriveRangeLevel || 1)} parseků</span>.
+                </p>
+              </div>
+
+              {/* 5x5 Sector Grid Map */}
+              <div className="grid grid-cols-5 gap-3 bg-slate-950/70 p-4 rounded-2xl border border-slate-800/80 flex-1 overflow-y-auto">
+                {Array.from({ length: 5 }).map((_, y) => {
+                  return Array.from({ length: 5 }).map((_, x) => {
+                    const sector = sectors.find(s => s.position.x === x && s.position.y === y);
+                    if (!sector) return <div key={`empty-${x}-${y}`} className="bg-slate-900/10 border border-transparent rounded-xl" />;
+
+                    const isCurrent = sector.id === currentSectorId;
+                    
+                    // Chebyshev distance
+                    const curSector = sectors.find(s => s.id === currentSectorId);
+                    const dist = curSector ? Math.max(Math.abs(sector.position.x - curSector.position.x), Math.abs(sector.position.y - curSector.position.y)) : 99;
+                    const inRange = dist <= (upgrades.carrierHyperdriveRangeLevel || 1);
+                    const isSelected = selectedMapSector?.id === sector.id;
+
+                    // Style cell
+                    let cellBg = 'bg-slate-900/50 border-slate-800/60';
+                    let textClass = 'text-slate-400';
+                    let typeLabel = '';
+
+                    if (sector.discovered) {
+                      if (sector.type === 'magma') {
+                        cellBg = 'bg-red-950/30 border-red-900/40 hover:bg-red-950/40';
+                        typeLabel = '🌋 Magma';
+                      } else if (sector.type === 'ice') {
+                        cellBg = 'bg-sky-950/30 border-sky-900/40 hover:bg-sky-950/40';
+                        typeLabel = '❄️ Led';
+                      } else if (sector.type === 'gold') {
+                        cellBg = 'bg-amber-950/30 border-amber-900/40 hover:bg-amber-950/40';
+                        typeLabel = '👑 Zlato';
+                      } else if (sector.type === 'crystal') {
+                        cellBg = 'bg-indigo-950/30 border-indigo-900/40 hover:bg-indigo-950/40';
+                        typeLabel = '💎 Krystal';
+                      } else if (sector.type === 'pirate') {
+                        cellBg = 'bg-zinc-900/60 border-zinc-800/60 hover:bg-zinc-900/80';
+                        typeLabel = '☠️ Korzár';
+                      } else if (sector.type === 'void') {
+                        cellBg = 'bg-purple-950/20 border-purple-950/40 hover:bg-purple-950/30';
+                        typeLabel = '🌀 Void';
+                      } else {
+                        cellBg = 'bg-slate-900/60 border-slate-700/50 hover:bg-slate-900/80';
+                        typeLabel = '🪨 Silicon';
+                      }
+                      textClass = 'text-white font-bold';
+                    } else {
+                      // Undiscovered
+                      if (inRange) {
+                        cellBg = 'bg-slate-950/70 border-dashed border-violet-900/50 hover:border-violet-500/60';
+                        typeLabel = '📡 Neznámý';
+                        textClass = 'text-slate-500 italic';
+                      } else {
+                        cellBg = 'bg-slate-950/30 border-slate-900/40 opacity-40 cursor-not-allowed';
+                        typeLabel = '🔒 Uzamčeno';
+                        textClass = 'text-slate-600';
+                      }
+                    }
+
+                    if (isCurrent) {
+                      cellBg = 'bg-emerald-950/40 border-emerald-500 shadow-lg shadow-emerald-500/10';
+                    } else if (isSelected) {
+                      cellBg += ' ring-2 ring-violet-500 border-transparent';
+                    }
+
+                    return (
+                      <button
+                        key={sector.id}
+                        onClick={() => inRange || sector.discovered ? setSelectedMapSector(sector) : null}
+                        disabled={!inRange && !sector.discovered}
+                        className={`flex flex-col justify-between p-3 rounded-xl border text-left transition-all ${cellBg} ${inRange || sector.discovered ? 'cursor-pointer hover:scale-[1.03]' : ''}`}
+                      >
+                        <div className="flex justify-between items-start w-full">
+                          <span className="text-[9px] font-mono text-slate-500">
+                            [{sector.position.y + 1},{sector.position.x + 1}]
+                          </span>
+                          {isCurrent && (
+                            <span className="bg-emerald-500 text-slate-950 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider animate-pulse">
+                              ZDE
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="my-1">
+                          <h4 className={`text-xs truncate ${textClass}`}>
+                            {sector.discovered ? sector.name : 'Zaslepený Signál'}
+                          </h4>
+                          <span className="text-[9px] text-slate-500">{typeLabel}</span>
+                        </div>
+
+                        <div className="flex items-center gap-0.5 text-[8px] text-amber-500">
+                          {sector.discovered ? (
+                            Array.from({ length: sector.difficulty }).map((_, i) => (
+                              <span key={i}>⭐</span>
+                            ))
+                          ) : (
+                            <span className="text-slate-600">Obtížnost: ?</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  });
+                })}
+              </div>
+            </div>
+
+            {/* Right Column: Selected Sector Details */}
+            <div className="w-full md:w-2/5 p-6 bg-slate-950/60 flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm font-bold uppercase text-slate-400 tracking-wider mb-4">
+                  Detail Vybraného Sektoru
+                </h3>
+
+                {selectedMapSector ? (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+                      <div className="flex justify-between items-start">
+                        <h2 className="text-lg font-black text-white">
+                          {selectedMapSector.discovered ? selectedMapSector.name : 'Sektor s neznámým označením'}
+                        </h2>
+                        <span className="text-xs font-mono text-slate-500">
+                          [{selectedMapSector.position.y + 1},{selectedMapSector.position.x + 1}]
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1">
+                        <span className="text-xs text-slate-400">Prostředí:</span>
+                        <span className={`text-xs font-bold uppercase ${
+                          selectedMapSector.discovered 
+                            ? selectedMapSector.type === 'magma' ? 'text-red-400'
+                              : selectedMapSector.type === 'ice' ? 'text-sky-400'
+                              : selectedMapSector.type === 'gold' ? 'text-amber-400'
+                              : selectedMapSector.type === 'crystal' ? 'text-indigo-400'
+                              : selectedMapSector.type === 'pirate' ? 'text-zinc-400'
+                              : 'text-slate-400'
+                            : 'text-slate-500'
+                        }`}>
+                          {selectedMapSector.discovered ? selectedMapSector.type.toUpperCase() : 'NEZNÁMÉ 🔒'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {selectedMapSector.discovered ? (
+                      <div className="space-y-3 text-xs">
+                        <div className="p-3.5 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-2">
+                          <div className="flex justify-between text-slate-400">
+                            <span>Hustota asteroidů:</span>
+                            <span className="text-white font-mono font-bold">{selectedMapSector.asteroidDensity}%</span>
+                          </div>
+                          <div className="flex justify-between text-slate-400">
+                            <span>Obtížnost sektoru:</span>
+                            <span className="text-amber-400 font-bold">
+                              {Array.from({ length: selectedMapSector.difficulty }).map(() => '⭐').join('')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {selectedMapSector.sectorBonuses.length > 0 && (
+                          <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-emerald-400">
+                            <span className="font-bold block mb-1">🎁 SEKTOROVÉ BONUSY:</span>
+                            <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                              {selectedMapSector.sectorBonuses.map((bonus, i) => (
+                                <li key={i}>{bonus}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {selectedMapSector.hazards.length > 0 && (
+                          <div className="p-3 rounded-xl bg-red-950/20 border border-red-900/40 text-red-400">
+                            <span className="font-bold block mb-1">⚠️ ENVIRONMENTÁLNÍ NEBEZPEČÍ:</span>
+                            <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                              {selectedMapSector.hazards.map((haz, i) => {
+                                let hazText = haz;
+                                if (haz === 'solar_storm') hazText = '🌋 Solární erupce (láva)';
+                                else if (haz === 'em_storm') hazText = '⚡ EM Bouře (rušení)';
+                                else if (haz === 'pirate_patrol') hazText = '☠️ Hlídky korzárů';
+                                return <li key={i}>{hazText}</li>;
+                              })}
+                            </ul>
+                          </div>
+                        )}
+
+                        {selectedMapSector.bossId && (
+                          <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-900/40 text-purple-400 flex items-start gap-2 animate-pulse">
+                            <Skull className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+                            <div>
+                              <span className="font-bold block text-[11px]">👾 STRÁŽCE SEKTORU DETEKOVÁN!</span>
+                              <p className="text-[10px] text-purple-300">
+                                V tomto sektoru číhá Omega Korzár. Skok do této lokace vyvolá okamžitou bitvu.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center text-xs text-slate-500 py-10">
+                        <HelpCircle className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                        Sektor je mimo dosah našich radarů. Prozkoumejte ho skokem s hyperpohonem!
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">
+                    Vyberte sektor na levé mřížce kliknutím.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-6 border-t border-slate-800/80 pt-4 space-y-3">
+                {/* Fuel Display */}
+                <div className="flex justify-between items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-violet-400 animate-pulse fill-current" />
+                    Zásoba Hyper-Paliva:
+                  </span>
+                  <span className="text-sm font-mono font-bold text-violet-400 bg-violet-950/50 px-2.5 py-1 rounded-lg border border-violet-900/60">
+                    {(stats.deuterium || 0)}x Deuterium
+                  </span>
+                </div>
+
+                {/* Jump controls */}
+                {selectedMapSector && selectedMapSector.id !== currentSectorId && (
+                  <button
+                    onClick={() => handleExecuteHyperjump(selectedMapSector)}
+                    disabled={(stats.deuterium || 0) < 1}
+                    className={`w-full py-3.5 rounded-xl text-xs font-black uppercase tracking-widest text-center cursor-pointer transition-all ${
+                      (stats.deuterium || 0) >= 1
+                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-lg shadow-violet-600/25 hover:scale-[1.02] active:scale-95'
+                        : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                    }`}
+                  >
+                    {(stats.deuterium || 0) >= 1 ? '🚀 PROVÉST HYPER-SKOK' : '❌ NEDOSTATEK DEUTERIA'}
+                  </button>
+                )}
+
+                {selectedMapSector && selectedMapSector.id === currentSectorId && (
+                  <div className="w-full py-3 px-4 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-emerald-400 text-center text-xs font-bold font-mono">
+                    🛰️ V TOMTO SEKTORU SE AKTUÁLNŮ NACHÁZÍTE
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setIsMapOpen(false)}
+                  className="w-full py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 text-center transition-colors cursor-pointer"
+                >
+                  ZAVŘÍT NAVIGÁTOR
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* 6. SLIDING UPGRADE SHOP DRAWER ELEMENT */}
       <UpgradeShop
         isOpen={isShopOpen}
@@ -8438,6 +9479,8 @@ export default function App() {
         onUpgrade={handleUpgrade}
         onRepair={handleRepair}
         onRechargeShield={handleRechargeShield}
+        onBuyDeuterium={handleBuyDeuterium}
+        onBuyCarrierClass={handleBuyCarrierClass}
         currentHull={hull}
         maxHull={maxHull}
         currentShield={shield}

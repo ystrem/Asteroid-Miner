@@ -82,6 +82,35 @@ export interface Star {
   speed: number;
 }
 
+export type CarrierClass = 'none' | 'cargo' | 'mining' | 'war' | 'dreadnought' | 'stargate';
+
+export interface CarrierWeaponSlot {
+  position: 'front' | 'left' | 'right' | 'rear';
+  damage: number;
+  cooldown: number;
+  lastFired: number;
+  angleOffset: number; // offset in radians from carrier direction
+}
+
+export interface CarrierState {
+  id: string;
+  carrierClass: CarrierClass;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  hull: number;
+  maxHull: number;
+  shield: number;
+  maxShield: number;
+  fuel: number;
+  maxFuel: number;
+  dockedPlayerIds: string[]; // players currently docked
+  weaponSlots: CarrierWeaponSlot[];
+  lastFired: number;
+}
+
 export interface Upgrades {
   laserLevel: number;    // 1 to 4
   magnetLevel: number;   // 1 to 5
@@ -99,12 +128,25 @@ export interface Upgrades {
   quantumMirrorLevel: number;      // 0 to 1 (Quantum Mirror upgrade)
   toxicTrailLevel: number;         // 0 to 1 (Toxic/Reactive Trail exhaust upgrade)
   salvageMagnetLevel: number;      // 0 to 1 (Salvage Magnet / Combo scaling upgrade)
+  
+  // Carrier Upgrades
+  carrierClass: CarrierClass;
+  carrierHullLevel: number;        // 0 to 5
+  carrierShieldLevel: number;      // 0 to 5
+  carrierEngineLevel: number;      // 0 to 5
+  carrierWeaponSlotLevel: number;  // 0 to 5
+  carrierWeaponDamageLevel: number; // 1 to 5
+  carrierHyperfuelTankLevel: number; // 1 to 5
+  carrierHyperdriveRangeLevel: number; // 1 to 3
+  carrierRepairBayLevel: number;    // 0 to 3
+  carrierCargoHoldLevel: number;    // 0 to 3
 }
 
 export interface PlayerStats {
   crystals: number;
   diamonds: number;
   obsidian: number;
+  deuterium: number; // New fuel resource
   highScore: number;
   totalAsteroidsMined: number;
   prestigeCount?: number; // Number of times player completed New Game+ by discarding supplies

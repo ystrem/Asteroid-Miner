@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Upgrades, PlayerStats } from '../types';
+import { Upgrades, PlayerStats, CarrierClass } from '../types';
 import { playUpgradeSound } from '../utils/audio';
 import { 
   Sparkles, 
@@ -21,7 +21,9 @@ import {
   Unlock,
   CheckCircle2,
   AlertTriangle,
-  Info
+  Info,
+  Ship,
+  Flame
 } from 'lucide-react';
 
 interface UpgradeShopProps {
@@ -36,7 +38,199 @@ interface UpgradeShopProps {
   onUpgrade: (type: keyof Upgrades, costs: { crystals: number; diamonds: number; obsidian: number }, nextLevel: number) => void;
   onRepair: (diamondsCost: number, amount: number) => void;
   onRechargeShield: (diamondsCost: number) => void;
+  onBuyDeuterium?: (diamondsCost: number, amount: number) => void;
+  onBuyCarrierClass?: (carrierClass: CarrierClass, costs: { crystals: number; diamonds: number; obsidian: number }) => void;
 }
+
+export const CARRIER_CLASSES = [
+  {
+    id: 'cargo' as CarrierClass,
+    name: 'Nákladní bárka',
+    description: 'Pomalá mateřská loď s vysokou kapacitou, vhodná pro začínající těžaře.',
+    costs: { crystals: 0, diamonds: 50, obsidian: 10 },
+    hp: 500,
+    shield: 100,
+    slots: 1,
+    speed: 'Pomalá',
+    range: 1,
+    maxFuel: 10
+  },
+  {
+    id: 'mining' as CarrierClass,
+    name: 'Těžební platforma',
+    description: 'Mobilní těžební základna se zesíleným trupem a lepším hyperpohonem.',
+    costs: { crystals: 0, diamonds: 80, obsidian: 20 },
+    hp: 800,
+    shield: 150,
+    slots: 1,
+    speed: 'Pomalá',
+    range: 2,
+    maxFuel: 15
+  },
+  {
+    id: 'war' as CarrierClass,
+    name: 'Válečný tender',
+    description: 'Arzenálem vybavená loď určená k ochraně těžařů v nebezpečných sektorech.',
+    costs: { crystals: 0, diamonds: 150, obsidian: 40 },
+    hp: 1200,
+    shield: 250,
+    slots: 3,
+    speed: 'Střední',
+    range: 2,
+    maxFuel: 20
+  },
+  {
+    id: 'dreadnought' as CarrierClass,
+    name: 'Dreadnought',
+    description: 'Monumentální bitevní křižník s extrémním pancířem a 5 zbraňovými sloty.',
+    costs: { crystals: 0, diamonds: 400, obsidian: 100 },
+    hp: 2500,
+    shield: 500,
+    slots: 5,
+    speed: 'Střední',
+    range: 3,
+    maxFuel: 30
+  },
+  {
+    id: 'stargate' as CarrierClass,
+    name: 'Hvězdná brána',
+    description: 'Vrchol inženýrství. Dokáže generovat stabilní červí díry napříč galaxií.',
+    costs: { crystals: 0, diamonds: 600, obsidian: 150 },
+    hp: 2000,
+    shield: 400,
+    slots: 3,
+    speed: 'Pomalá',
+    range: 4,
+    maxFuel: 40
+  }
+];
+
+export interface CarrierUpgradeType {
+  id: keyof Upgrades;
+  name: string;
+  description: string;
+  maxLevel: number;
+  levels: {
+    level: number;
+    title: string;
+    description: string;
+    costs: { crystals: number; diamonds: number; obsidian: number };
+  }[];
+}
+
+export const CARRIER_UPGRADES: CarrierUpgradeType[] = [
+  {
+    id: 'carrierHullLevel',
+    name: 'Pancéřování Carrieru',
+    description: 'Vylepšuje maximální pevnost trupu mateřské lodi.',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: 'Zesílená ocel', description: 'Trup zvýšen o +200 HP', costs: { crystals: 0, diamonds: 15, obsidian: 2 } },
+      { level: 2, title: 'Platinové pláty', description: 'Trup zvýšen o +400 HP', costs: { crystals: 0, diamonds: 30, obsidian: 5 } },
+      { level: 3, title: 'Titanové kompozity', description: 'Trup zvýšen o +600 HP', costs: { crystals: 0, diamonds: 60, obsidian: 12 } },
+      { level: 4, title: 'Obsidiánová výztuž', description: 'Trup zvýšen o +900 HP', costs: { crystals: 0, diamonds: 120, obsidian: 25 } },
+      { level: 5, title: 'Neutroniová schránka', description: 'Trup zvýšen o +1400 HP', costs: { crystals: 0, diamonds: 250, obsidian: 60 } }
+    ]
+  },
+  {
+    id: 'carrierShieldLevel',
+    name: 'Generátory Štítu',
+    description: 'Posiluje fázové ochranné štíty mateřské lodi.',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: 'Iontový štít I', description: 'Kapacita štítu +150, obnova +15%', costs: { crystals: 0, diamonds: 15, obsidian: 2 } },
+      { level: 2, title: 'Fázový štít II', description: 'Kapacita štítu +300, obnova +30%', costs: { crystals: 0, diamonds: 30, obsidian: 5 } },
+      { level: 3, title: 'Rezonanční štít III', description: 'Kapacita štítu +500, obnova +45%', costs: { crystals: 0, diamonds: 60, obsidian: 12 } },
+      { level: 4, title: 'Těžký Aegis IV', description: 'Kapacita štítu +800, obnova +60%', costs: { crystals: 0, diamonds: 120, obsidian: 25 } },
+      { level: 5, title: 'Singularitní bariéra V', description: 'Kapacita štítu +1200, obnova +80%', costs: { crystals: 0, diamonds: 250, obsidian: 60 } }
+    ]
+  },
+  {
+    id: 'carrierEngineLevel',
+    name: 'Pohonné Motory',
+    description: 'Vylepšuje rychlost a obratnost mateřské lodi.',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: 'Iontový pohon I', description: 'Rychlost a akcelerace o +20%', costs: { crystals: 0, diamonds: 10, obsidian: 1 } },
+      { level: 2, title: 'Plazmové trysky II', description: 'Rychlost a akcelerace o +40%', costs: { crystals: 0, diamonds: 25, obsidian: 4 } },
+      { level: 3, title: 'Gravitační reaktor III', description: 'Rychlost a akcelerace o +60%', costs: { crystals: 0, diamonds: 50, obsidian: 10 } },
+      { level: 4, title: 'Warpový injektor IV', description: 'Rychlost a akcelerace o +80%', costs: { crystals: 0, diamonds: 100, obsidian: 20 } },
+      { level: 5, title: 'Anihilační motory V', description: 'Maximální agilita a nulové tření', costs: { crystals: 0, diamonds: 200, obsidian: 50 } }
+    ]
+  },
+  {
+    id: 'carrierWeaponSlotLevel',
+    name: 'Zbraňové Sloty',
+    description: 'Odemkne dodatečné zbraňové věže (omezeno třídou carrieru).',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: '1. Věž (Přední)', description: 'Aktivuje přední zbraňový slot', costs: { crystals: 0, diamonds: 20, obsidian: 3 } },
+      { level: 2, title: '2. Věž (Levá)', description: 'Aktivuje levý zbraňový slot', costs: { crystals: 0, diamonds: 40, obsidian: 8 } },
+      { level: 3, title: '3. Věž (Pravá)', description: 'Aktivuje pravý zbraňový slot', costs: { crystals: 0, diamonds: 80, obsidian: 15 } },
+      { level: 4, title: '4. Věž (Zadní)', description: 'Aktivuje zadní zbraňový slot', costs: { crystals: 0, diamonds: 150, obsidian: 30 } },
+      { level: 5, title: '5. Věž (Auxiliary)', description: 'Aktivuje pátou přídavnou hlaveň', costs: { crystals: 0, diamonds: 300, obsidian: 80 } }
+    ]
+  },
+  {
+    id: 'carrierWeaponDamageLevel',
+    name: 'Síla Zbraní',
+    description: 'Zvyšuje poškození všech aktivovaných zbraní mateřské lodi.',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: 'Zesílený výboj', description: 'Poškození střelby ×1.2', costs: { crystals: 0, diamonds: 15, obsidian: 2 } },
+      { level: 2, title: 'Tachyonový fokus', description: 'Poškození střelby ×1.5', costs: { crystals: 0, diamonds: 30, obsidian: 6 } },
+      { level: 3, title: 'Kvantová amplifikace', description: 'Poškození střelby ×2.0', costs: { crystals: 0, diamonds: 60, obsidian: 12 } },
+      { level: 4, title: 'Anihilační jádro', description: 'Poškození střelby ×2.5', costs: { crystals: 0, diamonds: 120, obsidian: 25 } },
+      { level: 5, title: 'Singulární overdrive', description: 'Poškození střelby ×3.5', costs: { crystals: 0, diamonds: 240, obsidian: 60 } }
+    ]
+  },
+  {
+    id: 'carrierHyperfuelTankLevel',
+    name: 'Nádrž Deuteria',
+    description: 'Zvětšuje maximální kapacitu palivové nádrže.',
+    maxLevel: 5,
+    levels: [
+      { level: 1, title: 'Standardní nádrž', description: 'Kapacita paliva: 5 jednotek', costs: { crystals: 0, diamonds: 10, obsidian: 1 } },
+      { level: 2, title: 'Zesílené stěny', description: 'Kapacita paliva: 10 jednotek', costs: { crystals: 0, diamonds: 20, obsidian: 3 } },
+      { level: 3, title: 'Kryogenní kompresor', description: 'Kapacita paliva: 15 jednotek', costs: { crystals: 0, diamonds: 40, obsidian: 8 } },
+      { level: 4, title: 'Těžký rezervoár', description: 'Kapacita paliva: 25 jednotek', costs: { crystals: 0, diamonds: 80, obsidian: 15 } },
+      { level: 5, title: 'Antihmotové pouzdro', description: 'Kapacita paliva: 50 jednotek', costs: { crystals: 0, diamonds: 160, obsidian: 35 } }
+    ]
+  },
+  {
+    id: 'carrierHyperdriveRangeLevel',
+    name: 'Dosah Hyperpohonu',
+    description: 'Vylepšuje vzdálenost, kterou lze překonat jedním skokem.',
+    maxLevel: 3,
+    levels: [
+      { level: 1, title: 'Standardní skok', description: 'Dosah skoku: 1 sektor', costs: { crystals: 0, diamonds: 25, obsidian: 5 } },
+      { level: 2, title: 'Sub-Prostorový skok', description: 'Dosah skoku: 2 sektory', costs: { crystals: 0, diamonds: 75, obsidian: 15 } },
+      { level: 3, title: 'Červí díra hyperjump', description: 'Dosah skoku: 3 sektory', costs: { crystals: 0, diamonds: 200, obsidian: 50 } }
+    ]
+  },
+  {
+    id: 'carrierRepairBayLevel',
+    name: 'Opravný Dok',
+    description: 'Zprovozní automatickou opravu trupů a štítů pro všechny dokované hráče.',
+    maxLevel: 3,
+    levels: [
+      { level: 1, title: 'Pomalá údržba', description: 'Automaticky opravuje +1% HP/s při dokování', costs: { crystals: 0, diamonds: 30, obsidian: 10 } },
+      { level: 2, title: 'Fokusované nano-svařování', description: 'Automaticky opravuje +3% HP/s a štíty', costs: { crystals: 0, diamonds: 90, obsidian: 25 } },
+      { level: 3, title: 'Okamžitá rekonstrukce', description: 'Plná oprava dokovaných lodí do 5 sekund', costs: { crystals: 0, diamonds: 250, obsidian: 70 } }
+    ]
+  },
+  {
+    id: 'carrierCargoHoldLevel',
+    name: 'Nákladový Prostor',
+    description: 'Zvyšuje kapacitu a bonus k prodaným surovinám.',
+    maxLevel: 3,
+    levels: [
+      { level: 1, title: 'Zvětšené kontejnery', description: 'Těžařský bonus k prodeji +15%', costs: { crystals: 0, diamonds: 20, obsidian: 5 } },
+      { level: 2, title: 'Fázová komprese', description: 'Těžařský bonus k prodeji +35%', costs: { crystals: 0, diamonds: 50, obsidian: 12 } },
+      { level: 3, title: 'Singulární smrštění', description: 'Těžařský bonus k prodeji +60%', costs: { crystals: 0, diamonds: 120, obsidian: 30 } }
+    ]
+  }
+];
 
 interface UpgradeItem {
   id: keyof Upgrades;
@@ -70,8 +264,10 @@ export default function UpgradeShop({
   onUpgrade,
   onRepair,
   onRechargeShield,
+  onBuyDeuterium,
+  onBuyCarrierClass,
 }: UpgradeShopProps) {
-  const [activeTab, setActiveTab] = useState<'upgrades' | 'repairs'>('upgrades');
+  const [activeTab, setActiveTab] = useState<'upgrades' | 'repairs' | 'carrier'>('upgrades');
   const [selectedTechId, setSelectedTechId] = useState<keyof Upgrades>('laserLevel');
   const [hasPurchasedThisSession, setHasPurchasedThisSession] = useState<boolean>(false);
 
@@ -604,7 +800,7 @@ export default function UpgradeShop({
   // Determine if dependencies are satisfied
   const getUnmetDependencies = (id: keyof Upgrades) => {
     const deps = techDependencies[id] || [];
-    return deps.filter(dep => upgrades[dep.id] < dep.minLevel);
+    return deps.filter(dep => (upgrades[dep.id] as number) < dep.minLevel);
   };
 
   const isUnlocked = (id: keyof Upgrades) => {
@@ -718,6 +914,17 @@ export default function UpgradeShop({
           >
             🔧 ÚDRŽBA LODI (OPRAVY & ŠTÍTY)
           </button>
+          <button
+            onClick={() => setActiveTab('carrier')}
+            className={`flex-1 py-2.5 text-center rounded-lg transition-all cursor-pointer ${
+              activeTab === 'carrier'
+                ? 'bg-purple-950/50 text-purple-300 font-bold border-b-2 border-purple-500 shadow-[inset_0_-10px_15px_-10px_rgba(168,85,247,0.2)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+            }`}
+            id="tab-carrier"
+          >
+            🚀 MATEŘSKÁ LOĎ (CARRIER DOCK)
+          </button>
         </div>
 
         {/* Main Content Pane */}
@@ -759,7 +966,7 @@ export default function UpgradeShop({
                     <div className="flex flex-col space-y-1">
                       {branch.nodes.map((nodeId, idx) => {
                         const item = upgradeDatabase.find(t => t.id === nodeId)!;
-                        const lvl = upgrades[nodeId];
+                        const lvl = upgrades[nodeId] as number;
                         const maxed = lvl >= item.maxLevel;
                         const unlocked = isUnlocked(nodeId);
                         const isSelected = selectedTechId === nodeId;
@@ -880,13 +1087,13 @@ export default function UpgradeShop({
                   {techDependencies[selectedTechId] ? (
                     <div className="space-y-1.5 pt-0.5">
                       {techDependencies[selectedTechId].map(dep => {
-                        const met = upgrades[dep.id] >= dep.minLevel;
+                        const met = (upgrades[dep.id] as number) >= dep.minLevel;
                         return (
                           <div key={dep.id} className="flex items-center justify-between text-xs font-mono">
                             <span className="text-slate-300">{dep.name}</span>
                             <span className={`font-semibold flex items-center gap-1 ${met ? 'text-emerald-400' : 'text-red-400'}`}>
                               {met ? (
-                                <>✓ Splněno (Lvl {upgrades[dep.id]})</>
+                                <>✓ Splněno (Lvl {upgrades[dep.id] as number})</>
                               ) : (
                                 <>✗ Vyžaduje Lvl {dep.minLevel}</>
                               )}
@@ -991,7 +1198,7 @@ export default function UpgradeShop({
             </div>
 
           </div>
-        ) : (
+        ) : activeTab === 'repairs' ? (
           /* Tab OPRAVY & DOBÍJENÍ */
           <div className="flex-1 overflow-y-auto p-4 space-y-4" id="shop-items-scroll">
             <div className="space-y-4" id="repairs-section">
@@ -1097,7 +1304,239 @@ export default function UpgradeShop({
                   </div>
                 </div>
               )}
+
+              {/* Refuel Deuterium item */}
+              <div className="bg-slate-950/30 border border-slate-800 rounded-xl p-4 flex justify-between items-center hover:bg-slate-950/50 transition-all">
+                <div className="space-y-1 pr-4 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 px-1.5 rounded-lg bg-purple-500/10 text-purple-400 text-xs font-bold font-mono">HYPERFUEL</div>
+                    <h4 className="font-bold text-slate-100 text-base">Doplnit Deuterium (Palivo hyperpohonu)</h4>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    Kupte deuterium k pohonu hyperjumpu mateřské lodi. Aktuální zásoba: <span className="text-purple-400 font-bold">{stats.deuterium || 0} j.</span>
+                  </p>
+                </div>
+
+                <div className="shrink-0 flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-1 text-xs font-mono">
+                    <Gem className="w-3.5 h-3.5 text-blue-400" />
+                    <span className={stats.diamonds >= 8 ? 'text-blue-400 font-bold' : 'text-slate-500 line-through'}>
+                      8 d.
+                    </span>
+                  </div>
+
+                  <button
+                    disabled={stats.diamonds < 8}
+                    onClick={() => onBuyDeuterium && onBuyDeuterium(8, 1)}
+                    className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all font-mono cursor-pointer ${
+                      stats.diamonds >= 8
+                        ? 'bg-purple-500 hover:bg-purple-400 text-white shadow-md shadow-purple-500/10 hover:scale-[1.02]'
+                        : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                    }`}
+                  >
+                    Koupit +1 Palivo
+                  </button>
+                </div>
+              </div>
             </div>
+          </div>
+        ) : (
+          /* Tab MATEŘSKÁ LOĎ (CARRIER DOCK) */
+          <div className="flex-1 overflow-y-auto p-4 space-y-6" id="carrier-dock-tab">
+            {upgrades.carrierClass === 'none' ? (
+              /* Carrier Shop */
+              <div className="space-y-6">
+                <div className="bg-purple-950/20 border border-purple-500/30 rounded-xl p-4 flex items-center gap-3 shadow-[0_2px_15px_rgba(0,0,0,0.2)]">
+                  <Ship className="w-8 h-8 text-purple-400 shrink-0" />
+                  <div>
+                    <h3 className="font-black text-sm text-purple-300 uppercase tracking-widest font-mono">KOSMICKÝ DOK: NÁKUP MATEŘSKÉ LODĚ</h3>
+                    <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                      Zde si můžete pořídit masivní mateřskou loď (Carrier), která slouží jako vaše mobilní základna a zbraňová platforma. Umožňuje hyperprostorové cestování mezi sektory a dokování vaší malé lodi.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {CARRIER_CLASSES.map((carrier) => {
+                    const canAffordC = stats.diamonds >= carrier.costs.diamonds && stats.obsidian >= carrier.costs.obsidian;
+                    return (
+                      <div key={carrier.id} className="border border-slate-800 bg-slate-950/60 rounded-xl p-4 flex flex-col space-y-4 shadow-md hover:border-purple-500/30 transition-all">
+                        <div>
+                          <div className="flex justify-between items-start">
+                            <h4 className="font-black text-lg text-slate-100 font-mono tracking-tight">{carrier.name}</h4>
+                            <span className="text-[10px] bg-purple-950/60 text-purple-400 font-bold px-2 py-0.5 rounded-full border border-purple-800/30">CLASS</span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-1 leading-relaxed h-12 overflow-hidden">{carrier.description}</p>
+                        </div>
+
+                        {/* Carrier Specs */}
+                        <div className="grid grid-cols-2 gap-2 text-[11px] font-mono border-y border-slate-900 py-3 bg-slate-950/40 px-2 rounded-lg">
+                          <div className="text-slate-400">Pancíř trupu: <span className="text-amber-400 font-bold">{carrier.hp} HP</span></div>
+                          <div className="text-slate-400">Štíty: <span className="text-blue-400 font-bold">{carrier.shield} HP</span></div>
+                          <div className="text-slate-400">Zbraňové sloty: <span className="text-red-400 font-bold">{carrier.slots} věže</span></div>
+                          <div className="text-slate-400">Rychlost: <span className="text-emerald-400 font-bold">{carrier.speed}</span></div>
+                          <div className="text-slate-400">Dosah hyperpohonu: <span className="text-purple-400 font-bold">{carrier.range} sek.</span></div>
+                          <div className="text-slate-400">Nádrž paliva: <span className="text-cyan-400 font-bold">{carrier.maxFuel} j.</span></div>
+                        </div>
+
+                        {/* Price */}
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 text-xs font-mono">
+                              <Gem className="w-3.5 h-3.5 text-blue-400" />
+                              <span className={stats.diamonds >= carrier.costs.diamonds ? 'text-blue-400 font-bold' : 'text-slate-500 line-through'}>
+                                {carrier.costs.diamonds} d.
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-xs font-mono">
+                              <Star className="w-3.5 h-3.5 text-purple-400" />
+                              <span className={stats.obsidian >= carrier.costs.obsidian ? 'text-purple-400 font-bold' : 'text-slate-500 line-through'}>
+                                {carrier.costs.obsidian} o.
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            disabled={!canAffordC}
+                            onClick={() => onBuyCarrierClass && onBuyCarrierClass(carrier.id, carrier.costs)}
+                            className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all font-mono cursor-pointer ${
+                              canAffordC
+                                ? 'bg-purple-500 hover:bg-purple-400 text-white shadow-lg shadow-purple-500/20 hover:scale-[1.02]'
+                                : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                            }`}
+                          >
+                            Zakoupit
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              /* Carrier Upgrades Management */
+              <div className="space-y-6">
+                {/* Active Carrier Header */}
+                <div className="bg-slate-950 border border-purple-500/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-lg">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-3 bg-purple-950/40 rounded-xl border border-purple-500/30 animate-pulse text-purple-400">
+                      <Ship className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full uppercase font-bold tracking-widest">Aktivní Letka</span>
+                      <h3 className="font-black text-2xl text-slate-100 font-mono tracking-tight mt-1">
+                        {CARRIER_CLASSES.find(c => c.id === upgrades.carrierClass)?.name || 'Mateřská loď'}
+                      </h3>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">DOK SYSTEM CONTROL • SYSTÉM REAKTORŮ LETKY AKTIVNÍ</p>
+                    </div>
+                  </div>
+
+                  {/* Fuel and Core info */}
+                  <div className="flex items-center gap-4 bg-slate-900/50 p-3 rounded-xl border border-slate-800 font-mono text-xs">
+                    <div className="flex flex-col">
+                      <span className="text-slate-500 text-[10px]">PALIVO DEUTERIUM</span>
+                      <span className="text-purple-400 font-bold text-base mt-0.5">{stats.deuterium || 0} jednotek</span>
+                    </div>
+                    <div className="h-8 w-px bg-slate-800" />
+                    <div className="flex flex-col">
+                      <span className="text-slate-500 text-[10px]">ZBRANĚ</span>
+                      <span className="text-red-400 font-bold text-base mt-0.5">
+                        {upgrades.carrierWeaponSlotLevel || 1} / {CARRIER_CLASSES.find(c => c.id === upgrades.carrierClass)?.slots || 1} věže
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grid of Upgrades */}
+                <div>
+                  <h3 className="font-black text-sm text-slate-400 uppercase tracking-widest font-mono mb-4 flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-purple-400" /> VYLEPŠENÍ MODULŮ CARRIERU
+                  </h3>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {CARRIER_UPGRADES.map((upgrade) => {
+                      const currentLvl = (upgrades[upgrade.id] as number) || 0;
+                      const isMaxed = currentLvl >= upgrade.maxLevel;
+                      const nextSpec = upgrade.levels.find(l => l.level === currentLvl + 1);
+
+                      // Special limit for weapon slots based on carrier class
+                      const carrierClassSpec = CARRIER_CLASSES.find(c => c.id === upgrades.carrierClass);
+                      const maxSlotsForClass = carrierClassSpec ? carrierClassSpec.slots : 1;
+                      const isClassWeaponLimitMet = upgrade.id === 'carrierWeaponSlotLevel' && nextSpec && nextSpec.level > maxSlotsForClass;
+
+                      const canAffordU = nextSpec && stats.diamonds >= nextSpec.costs.diamonds && stats.obsidian >= nextSpec.costs.obsidian;
+                      const isBlockedByWeaponLimit = isClassWeaponLimitMet;
+
+                      return (
+                        <div key={upgrade.id} className="border border-slate-800 bg-slate-950/40 rounded-xl p-4 flex flex-col space-y-4 hover:bg-slate-950/60 transition-all">
+                          <div>
+                            <div className="flex justify-between items-start">
+                              <h4 className="font-bold text-base text-slate-100 font-mono tracking-tight">{upgrade.name}</h4>
+                              <span className="text-[10px] bg-slate-900 border border-slate-800 font-bold px-2 py-0.5 rounded-full font-mono text-slate-400">
+                                Lvl {currentLvl}/{upgrade.maxLevel}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1 leading-relaxed h-8 overflow-hidden">{upgrade.description}</p>
+                          </div>
+
+                          {/* Level Details */}
+                          {!isMaxed && nextSpec ? (
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-900 text-xs flex flex-col space-y-2">
+                              <div>
+                                <span className="font-bold text-purple-300 block font-mono">DOPAD UPGRADU ({nextSpec.title}):</span>
+                                <span className="text-slate-300 leading-tight block mt-0.5">{nextSpec.description}</span>
+                              </div>
+
+                              {/* Upgrade cost */}
+                              <div className="flex items-center gap-3 border-t border-slate-800/80 pt-2 mt-1">
+                                <span className="text-[10px] text-slate-500 font-mono">CENA:</span>
+                                <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                                  <Gem className="w-3.5 h-3.5 text-blue-400" />
+                                  <span className={stats.diamonds >= nextSpec.costs.diamonds ? 'text-blue-400 font-bold' : 'text-slate-500 line-through'}>
+                                    {nextSpec.costs.diamonds} d.
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                                  <Star className="w-3.5 h-3.5 text-purple-400" />
+                                  <span className={stats.obsidian >= nextSpec.costs.obsidian ? 'text-purple-400 font-bold' : 'text-slate-500 line-through'}>
+                                    {nextSpec.costs.obsidian} o.
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="bg-purple-950/10 border border-purple-900/20 text-purple-300 text-center font-bold font-mono py-4 rounded-lg text-xs tracking-wider">
+                              ★ TENTO SYSTÉM JE PLNĚ UPGRADOVÁN!
+                            </div>
+                          )}
+
+                          {/* Action Button */}
+                          {!isMaxed && nextSpec && (
+                            <button
+                              disabled={!canAffordU || isBlockedByWeaponLimit}
+                              onClick={() => onUpgrade(upgrade.id, nextSpec.costs, nextSpec.level)}
+                              className={`w-full py-2 px-3 rounded-lg font-bold text-xs uppercase tracking-wider transition-all font-mono cursor-pointer ${
+                                isBlockedByWeaponLimit
+                                  ? 'bg-red-950/40 text-red-400 border border-red-900/30 cursor-not-allowed'
+                                  : canAffordU
+                                    ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-500/20 hover:scale-[1.01]'
+                                    : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                              }`}
+                            >
+                              {isBlockedByWeaponLimit 
+                                ? `🚨 LIMIT TŘÍDY (${maxSlotsForClass} věže)` 
+                                : canAffordU 
+                                  ? '⚡ Aktivovat Modul' 
+                                  : 'Nedostatek surovin'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
