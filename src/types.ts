@@ -84,6 +84,35 @@ export interface Star {
 
 export type CarrierClass = 'none' | 'cargo' | 'mining' | 'war' | 'dreadnought' | 'stargate';
 
+export type CapitalShipType = 'mining' | 'war' | 'mothership' | 'explorer';
+
+export interface CapitalShipStation {
+  id: 'pilot' | 'gunner_left' | 'gunner_right' | 'engineer';
+  name: string;
+  assignedPlayerId: string | null; // ID of the player currently controlling this station, null for AI auto-control
+  angle: number;
+  cooldown: number;
+  lastFired: number;
+}
+
+export interface CapitalShip {
+  type: CapitalShipType;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  radius: number;
+  hull: number;
+  maxHull: number;
+  shield: number;
+  maxShield: number;
+  stations: CapitalShipStation[];
+  lastHangarLaunchTime: number;
+  cargoCount: number;
+  rocketCooldown: number;
+}
+
 export interface CarrierWeaponSlot {
   position: 'front' | 'left' | 'right' | 'rear';
   damage: number;

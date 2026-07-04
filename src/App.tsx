@@ -18,6 +18,9 @@ import {
   OreType,
   Player,
   CarrierClass,
+  CapitalShipType,
+  CapitalShipStation,
+  CapitalShip,
   Pirate,
   PirateLaser,
   SockEntity,
@@ -189,6 +192,9 @@ export default function App() {
   const [isMuted, setIsMuted] = useState<boolean>(!getSoundState());
   const [showHowTo, setShowHowTo] = useState<boolean>(false);
   const [gameMode, setGameMode] = useState<'single' | 'coop'>('single');
+  const [capitalShipMode, setCapitalShipMode] = useState<boolean>(false);
+  const [selectedCapitalShipType, setSelectedCapitalShipType] = useState<CapitalShipType>('mining');
+  const [capitalShip, setCapitalShipState] = useState<CapitalShip | null>(null);
   const [gamepadsDetected, setGamepadsDetected] = useState<boolean[]>([false, false]);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard' | 'nightmare'>('medium');
   const [enemiesEnabled, setEnemiesEnabled] = useState<boolean>(true);
@@ -341,6 +347,17 @@ export default function App() {
   const currentSectorIdRef = useRef<string>(currentSectorId);
   const dockedPlayerIdsRef = useRef<string[]>([]);
   const lastCarrierFiredRef = useRef<number>(0);
+
+  const capitalShipModeRef = useRef<boolean>(capitalShipMode);
+  const capitalShipRef = useRef<CapitalShip | null>(capitalShip);
+
+  useEffect(() => {
+    capitalShipModeRef.current = capitalShipMode;
+  }, [capitalShipMode]);
+
+  useEffect(() => {
+    capitalShipRef.current = capitalShip;
+  }, [capitalShip]);
 
   useEffect(() => {
     sectorsRef.current = sectors;
@@ -525,6 +542,127 @@ export default function App() {
     }, 1500);
   };
 
+  // --- CAPITAL SHIP MANAGEMENT HELPERS ---
+  const assignPlayerToStation = (playerId: string, stationId: 'pilot' | 'gunner_left' | 'gunner_right' | 'engineer') => {
+    const ship = capitalShipRef.current;
+    if (!ship) return;
+
+    // Unassign player from any previous station
+    ship.stations.forEach(st => {
+      if (st.assignedPlayerId === playerId) {
+        st.assignedPlayerId = null;
+      }
+    });
+
+    // Assign to new station
+    const targetStation = ship.stations.find(st => st.id === stationId);
+    if (targetStation) {
+      targetStation.assignedPlayerId = playerId;
+      const pl = playersRef.current.find(p => p.id === playerId);
+      if (pl) {
+        addGainNotification(`👥 ${pl.name} OBSADIL STANICI: ${targetStation.name}`, pl.color);
+      }
+    }
+
+    setCapitalShipState({ ...ship });
+  };
+
+  const cyclePlayerStation = (playerId: string) => {
+    const ship = capitalShipRef.current;
+    if (!ship) return;
+
+    const currentStation = ship.stations.find(st => st.assignedPlayerId === playerId);
+    const order: ('pilot' | 'gunner_left' | 'gunner_right' | 'engineer')[] = ['pilot', 'gunner_left', 'gunner_right', 'engineer'];
+    
+    let nextIdx = 0;
+    if (currentStation) {
+      const currentIdx = order.indexOf(currentStation.id);
+      nextIdx = (currentIdx + 1) % order.length;
+    }
+
+    const nextStationId = order[nextIdx];
+    assignPlayerToStation(playerId, nextStationId);
+  };
+
+  const fireCapitalShipLaser = (
+    stationId: 'pilot' | 'gunner_left' | 'gunner_right' | 'engineer', 
+    angle: number, 
+    color: string,
+    isAI: boolean = false
+  ) => {
+    const ship = capitalShipRef.current;
+    if (!ship) return;
+
+    const now = Date.now();
+    const station = ship.stations.find(s => s.id === stationId);
+    if (!station) return;
+
+    const cooldown = isAI ? 650 : 220;
+    if (now - station.lastFired < cooldown) return;
+    station.lastFired = now;
+
+    playLaserSound(Math.min(5, upgradesRef.current.laserLevel || 1));
+
+    let r = ship.type === 'mining' ? 65 : ship.type === 'war' ? 50 : ship.type === 'mothership' ? 85 : 35;
+    let offsetAngle = 0;
+    if (stationId === 'pilot') { offsetAngle = 0; }
+    else if (stationId === 'gunner_left') { offsetAngle = -Math.PI/2 - 0.5; }
+    else if (stationId === 'gunner_right') { offsetAngle = -Math.PI/2 + 0.5; }
+    else if (stationId === 'engineer') { offsetAngle = Math.PI; }
+
+    const turretX = ship.x + Math.cos(ship.angle + offsetAngle) * (r * 0.55);
+    const turretY = ship.y + Math.sin(ship.angle + offsetAngle) * (r * 0.55);
+
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    const speed = 10;
+    lasersRef.current.push({
+      id: Math.random().toString(36).substring(2, 9),
+      x: turretX + cos * 15,
+      y: turretY + sin * 15,
+      vx: cos * speed,
+      vy: sin * speed,
+      angle: angle,
+      damage: 15 + (upgradesRef.current.laserLevel - 1) * 8,
+      isPiercing: upgradesRef.current.laserLevel >= 4,
+      piercedAsteroidIds: [],
+      radius: 4,
+      width: 3,
+      color: color,
+      lifetime: 0,
+      maxLifetime: 75
+    });
+  };
+
+  const syncCapitalShipAndPlayers = () => {
+    const ship = capitalShipRef.current;
+    if (!ship) return;
+
+    // Apply strict world boundaries
+    const limit = 3800;
+    const dist = Math.hypot(ship.x, ship.y);
+    if (dist > limit) {
+      const angle = Math.atan2(ship.y, ship.x);
+      ship.x = Math.cos(angle) * limit;
+      ship.y = Math.sin(angle) * limit;
+      ship.vx *= -0.4;
+      ship.vy *= -0.4;
+    }
+
+    playersRef.current.forEach(p => {
+      p.x = ship.x;
+      p.y = ship.y;
+      p.vx = ship.vx;
+      p.vy = ship.vy;
+      p.radius = ship.type === 'mining' ? 65 : ship.type === 'war' ? 50 : ship.type === 'mothership' ? 85 : 35;
+      p.hull = Math.round(ship.hull * (p.maxHull / ship.maxHull));
+      p.shield = Math.round(ship.shield * (p.maxShield / ship.maxShield));
+    });
+
+    setCapitalShipState({ ...ship });
+  };
+
   // --- DYNAMIC JOIN AND LEAVE HANDLERS (DROP-IN / DROP-OUT) ---
   const joinPlayer = (source: 'keyboard_p1' | 'keyboard_p2' | 'gamepad', gamepadIdx: number | null = null) => {
     // Check if configuration already active
@@ -604,6 +742,16 @@ export default function App() {
     playersRef.current.push(newPlayer);
     setActivePlayers([...playersRef.current]);
     addGainNotification(`🚀 ${pName} SE PŘIPOJIL K TĚŽBĚ!`, pColor);
+
+    if (capitalShipModeRef.current && capitalShipRef.current) {
+      const ship = capitalShipRef.current;
+      const freeStation = ship.stations.find(st => st.assignedPlayerId === null);
+      if (freeStation) {
+        freeStation.assignedPlayerId = newPlayer.id;
+        addGainNotification(`👥 ${newPlayer.name} AUTOMATICKY OBSADIL STANICI: ${freeStation.name}`, newPlayer.color);
+      }
+      setCapitalShipState({ ...ship });
+    }
   };
 
   const leavePlayer = (id: string) => {
@@ -618,6 +766,17 @@ export default function App() {
     playersRef.current = playersRef.current.filter(p => p.id !== id);
     setActivePlayers([...playersRef.current]);
     addGainNotification(`🔌 ${player.name} SE ODPOJIL`, '#94a3b8');
+
+    if (capitalShipModeRef.current && capitalShipRef.current) {
+      const ship = capitalShipRef.current;
+      ship.stations.forEach(st => {
+        if (st.assignedPlayerId === id) {
+          st.assignedPlayerId = null;
+          addGainNotification(`👥 STANICE UVOLNĚNA: ${st.name}`, '#cbd5e1');
+        }
+      });
+      setCapitalShipState({ ...ship });
+    }
   };
 
   // --- KEYBOARD & GAMEPAD EVENT HANDLERS ---
@@ -629,6 +788,21 @@ export default function App() {
       keyboardOrMousePressedRef.current = true;
 
       if (isPlaying && !isShopOpen) {
+        if (capitalShipModeRef.current) {
+          if (code === 'KeyC') {
+            const p2 = playersRef.current.find(p => p.inputSource === 'keyboard_p2');
+            if (p2) {
+              cyclePlayerStation(p2.id);
+            }
+          }
+          if (code === 'Digit0' || code === 'Numpad0' || code === 'KeyM') {
+            const p1 = playersRef.current.find(p => p.inputSource === 'keyboard_p1');
+            if (p1) {
+              cyclePlayerStation(p1.id);
+            }
+          }
+        }
+
         // Dynamic drop-in detection for Player 1 (Keyboard Arrows)
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlRight', 'Digit7', 'Digit8', 'Digit9', 'KeyH', 'Digit0', 'Numpad0'].includes(code)) {
           const hasP1 = playersRef.current.some(p => p.inputSource === 'keyboard_p1');
@@ -1231,6 +1405,74 @@ export default function App() {
     }
 
     setActivePlayers([...playersRef.current]);
+
+    if (capitalShipMode) {
+      capitalShipModeRef.current = true;
+      const type = selectedCapitalShipType;
+      let maxHull = 400;
+      let maxShield = 200;
+      let radius = 55;
+
+      if (type === 'mining') {
+        maxHull = 600;
+        maxShield = 200;
+        radius = 65;
+      } else if (type === 'war') {
+        maxHull = 500;
+        maxShield = 350;
+        radius = 50;
+      } else if (type === 'mothership') {
+        maxHull = 800;
+        maxShield = 400;
+        radius = 80;
+      } else if (type === 'explorer') {
+        maxHull = 300;
+        maxShield = 150;
+        radius = 35;
+      }
+
+      const ship: CapitalShip = {
+        x: 0,
+        y: 150,
+        vx: 0,
+        vy: 0,
+        angle: -Math.PI / 2,
+        hull: maxHull,
+        maxHull: maxHull,
+        shield: maxShield,
+        maxShield: maxShield,
+        radius: radius,
+        type: type,
+        stations: [
+          { id: 'pilot', name: '🎯 Kormidelník', angle: 0, assignedPlayerId: null, cooldown: 0, lastFired: 0 },
+          { id: 'gunner_left', name: '🔫 Levý střelec', angle: -Math.PI / 2, assignedPlayerId: null, cooldown: 0, lastFired: 0 },
+          { id: 'gunner_right', name: '🔫 Pravý střelec', angle: Math.PI / 2, assignedPlayerId: null, cooldown: 0, lastFired: 0 },
+          { id: 'engineer', name: '🛡️ Inženýr', angle: Math.PI, assignedPlayerId: null, cooldown: 0, lastFired: 0 },
+        ],
+        rocketCooldown: 0,
+        lastHangarLaunchTime: 0,
+        cargoCount: 0,
+      };
+
+      playersRef.current.forEach((pl, idx) => {
+        if (idx === 0) {
+          ship.stations[0].assignedPlayerId = pl.id;
+        } else if (idx === 1) {
+          ship.stations[1].assignedPlayerId = pl.id;
+        } else if (idx === 2) {
+          ship.stations[2].assignedPlayerId = pl.id;
+        } else if (idx === 3) {
+          ship.stations[3].assignedPlayerId = pl.id;
+        }
+      });
+
+      capitalShipRef.current = ship;
+      setCapitalShipState({ ...ship });
+    } else {
+      capitalShipModeRef.current = false;
+      capitalShipRef.current = null;
+      setCapitalShipState(null);
+    }
 
     // Initial entities clear
     asteroidsRef.current = [];
@@ -2593,372 +2835,691 @@ export default function App() {
     }
 
     // --- PROCESS INPUT FOR ALL ACTIVE PLAYERS ---
-    playersRef.current.forEach(p => {
-      p.thrusting = false;
-      p.reversing = false;
+    isAnyPlayerThrusting = false;
 
-      // Skip normal physics input if currently docked inside Carrier
-      if (dockedPlayerIdsRef.current.includes(p.id)) {
-        return;
+    if (capitalShipModeRef.current) {
+      // Under capital ship mode, inputs are routed through the capital ship stations.
+      const ship = capitalShipRef.current;
+      if (ship) {
+        const pilotStation = ship.stations.find(s => s.id === 'pilot');
+        if (pilotStation && pilotStation.assignedPlayerId) {
+          const p = playersRef.current.find(pl => pl.id === pilotStation.assignedPlayerId);
+          if (p && p.hull > 0) {
+            if (p.inputSource === 'keyboard_p1') {
+              isAnyPlayerThrusting = !!keysPressed.current['ArrowUp'];
+            } else if (p.inputSource === 'keyboard_p2') {
+              isAnyPlayerThrusting = !!keysPressed.current['KeyW'];
+            } else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
+              const gp = gamepads[p.gamepadIndex];
+              if (gp) {
+                isAnyPlayerThrusting = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
+              }
+            }
+          }
+        }
       }
+    } else {
+      playersRef.current.forEach(p => {
+        p.thrusting = false;
+        p.reversing = false;
 
-      if (p.hull > 0) {
-        if (p.inputSource === 'keyboard_p1') {
-          p.thrusting = !!keysPressed.current['ArrowUp'];
-          p.reversing = !!keysPressed.current['ArrowDown'];
+        // Skip normal physics input if currently docked inside Carrier
+        if (dockedPlayerIdsRef.current.includes(p.id)) {
+          return;
+        }
 
-          if (keysPressed.current['ArrowLeft']) {
-            p.angle -= 0.08;
-          } else if (keysPressed.current['ArrowRight']) {
-            p.angle += 0.08;
-          }
+        if (p.hull > 0) {
+          if (p.inputSource === 'keyboard_p1') {
+            p.thrusting = !!keysPressed.current['ArrowUp'];
+            p.reversing = !!keysPressed.current['ArrowDown'];
 
-          if (keysPressed.current['ControlRight'] || keysPressed.current['Space']) {
-            fireActiveLaser(p, p.playerNum);
-          }
-        } 
-        else if (p.inputSource === 'keyboard_p2') {
-          p.thrusting = !!keysPressed.current['KeyW'];
-          p.reversing = !!keysPressed.current['KeyS'];
-
-          if (keysPressed.current['KeyA']) {
-            p.angle -= 0.08;
-          } else if (keysPressed.current['KeyD']) {
-            p.angle += 0.08;
-          }
-
-          // Use ControlLeft, KeyF, or Space (only if Player 1 is not active on Arrow keys) to fire laser
-          const hasP1 = playersRef.current.some(pl => pl.inputSource === 'keyboard_p1');
-          if (keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || (!hasP1 && keysPressed.current['Space'])) {
-            fireActiveLaser(p, p.playerNum);
-          }
-        } 
-        else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
-          const gp = gamepads[p.gamepadIndex];
-          if (gp) {
-            // Helper for edge-detection of buttons (just-pressed)
-            const getButtonJustPressed = (btnIdx: number): boolean => {
-              const pressed = gp.buttons[btnIdx]?.pressed || false;
-              const key = `gp_${p.gamepadIndex}_btn_${btnIdx}`;
-              const wasPressed = !!lastGamepadButtonsRef.current[key];
-              lastGamepadButtonsRef.current[key] = pressed;
-              return pressed && !wasPressed;
-            };
-
-            // Read analog sticks (Left stick = axes 0, 1; Right stick = axes 2, 3)
-            const lX = gp.axes[0] || 0;
-            const lY = gp.axes[1] || 0;
-            const rX = gp.axes[2] || 0;
-            const rY = gp.axes[3] || 0;
-
-            const leftStickMagnitude = Math.hypot(lX, lY);
-            const rightStickMagnitude = Math.hypot(rX, rY);
-
-            // 1. --- RIGHT STICK ROTATION (Otáčení lodičky) ---
-            if (rightStickMagnitude > 0.22) {
-              p.targetAngle = Math.atan2(rY, rX);
-              let deltaAngle = p.targetAngle - p.angle;
-              while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-              while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-              const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
-              p.angle += deltaAngle * Math.min(1, rotSpeed);
+            if (keysPressed.current['ArrowLeft']) {
+              p.angle -= 0.08;
+            } else if (keysPressed.current['ArrowRight']) {
+              p.angle += 0.08;
             }
 
-            // 2. --- LEFT STICK FLIGHT DIRECTION (Smer, kudy sa poletí) ---
-            if (leftStickMagnitude > 0.22) {
-              p.gamepadThrustAngle = Math.atan2(lY, lX);
-            } else {
-              p.gamepadThrustAngle = p.angle;
-            }
-
-            // 3. --- LT FORWARD MOVEMENT (Pohyb dopředu) ---
-            const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
-            p.thrusting = isLTPressed;
-            p.reversing = false;
-
-            // 4. --- RT SHOOTING (Střílení) ---
-            const isRTPressed = gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15;
-            if (isRTPressed) {
+            if (keysPressed.current['ControlRight'] || keysPressed.current['Space']) {
               fireActiveLaser(p, p.playerNum);
             }
+          } 
+          else if (p.inputSource === 'keyboard_p2') {
+            p.thrusting = !!keysPressed.current['KeyW'];
+            p.reversing = !!keysPressed.current['KeyS'];
 
-            // 5. --- SPECIAL ATTACKS (X, Y, B) ---
-            // B button (1) -> Pulse Wave Ring (Pulzní vlna)
-            if (getButtonJustPressed(1)) {
-              triggerPulseWaveRing(p.playerNum);
+            if (keysPressed.current['KeyA']) {
+              p.angle -= 0.08;
+            } else if (keysPressed.current['KeyD']) {
+              p.angle += 0.08;
             }
-            // X button (2) -> Super Magnet Vacuum (Super magnet)
-            if (getButtonJustPressed(2)) {
-              triggerSuperMagnetVacuum(p.playerNum);
+
+            // Use ControlLeft, KeyF, or Space (only if Player 1 is not active on Arrow keys) to fire laser
+            const hasP1 = playersRef.current.some(pl => pl.inputSource === 'keyboard_p1');
+            if (keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || (!hasP1 && keysPressed.current['Space'])) {
+              fireActiveLaser(p, p.playerNum);
             }
-            // Y button (3) -> Chain Lightning (Bleskový řetěz)
-            if (getButtonJustPressed(3)) {
-              triggerChainLightning(p.playerNum);
+          } 
+          else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
+            const gp = gamepads[p.gamepadIndex];
+            if (gp) {
+              // Helper for edge-detection of buttons (just-pressed)
+              const getButtonJustPressed = (btnIdx: number): boolean => {
+                const pressed = gp.buttons[btnIdx]?.pressed || false;
+                const key = `gp_${p.gamepadIndex}_btn_${btnIdx}`;
+                const wasPressed = !!lastGamepadButtonsRef.current[key];
+                lastGamepadButtonsRef.current[key] = pressed;
+                return pressed && !wasPressed;
+              };
+
+              // Read analog sticks (Left stick = axes 0, 1; Right stick = axes 2, 3)
+              const lX = gp.axes[0] || 0;
+              const lY = gp.axes[1] || 0;
+              const rX = gp.axes[2] || 0;
+              const rY = gp.axes[3] || 0;
+
+              const leftStickMagnitude = Math.hypot(lX, lY);
+              const rightStickMagnitude = Math.hypot(rX, rY);
+
+              // 1. --- RIGHT STICK ROTATION (Otáčení lodičky) ---
+              if (rightStickMagnitude > 0.22) {
+                p.targetAngle = Math.atan2(rY, rX);
+                let deltaAngle = p.targetAngle - p.angle;
+                while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+                while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+                const rotSpeed = 0.16 + (upgradesRef.current.engineLevel - 1) * 0.03;
+                p.angle += deltaAngle * Math.min(1, rotSpeed);
+              }
+
+              // 2. --- LEFT STICK FLIGHT DIRECTION (Smer, kudy sa poletí) ---
+              if (leftStickMagnitude > 0.22) {
+                p.gamepadThrustAngle = Math.atan2(lY, lX);
+              } else {
+                p.gamepadThrustAngle = p.angle;
+              }
+
+              // 3. --- LT FORWARD MOVEMENT (Pohyb dopředu) ---
+              const isLTPressed = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
+              p.thrusting = isLTPressed;
+              p.reversing = false;
+
+              // 4. --- RT SHOOTING (Střílení) ---
+              const isRTPressed = gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15;
+              if (isRTPressed) {
+                fireActiveLaser(p, p.playerNum);
+              }
+
+              // 5. --- SPECIAL ATTACKS (X, Y, B) ---
+              // B button (1) -> Pulse Wave Ring (Pulzní vlna)
+              if (getButtonJustPressed(1)) {
+                triggerPulseWaveRing(p.playerNum);
+              }
+              // X button (2) -> Super Magnet Vacuum (Super magnet)
+              if (getButtonJustPressed(2)) {
+                triggerSuperMagnetVacuum(p.playerNum);
+              }
+              // Y button (3) -> Chain Lightning (Bleskový řetěz)
+              if (getButtonJustPressed(3)) {
+                triggerChainLightning(p.playerNum);
+              }
             }
           }
-        }
 
-        if (p.thrusting) {
-          isAnyPlayerThrusting = true;
+          if (p.thrusting) {
+            isAnyPlayerThrusting = true;
+          }
         }
-      }
-    });
+      });
+    }
 
     updateEngineHum(isAnyPlayerThrusting);
 
     // --- APPLY PHYSICAL MOVEMENT SPEEDS AND DECELERATION ---
-    playersRef.current.forEach(p => {
-      // If player is dead, reset anchoring!
-      if (p.hull <= 0) {
-        p.anchoredAsteroidId = undefined;
-        p.isDrilling = false;
-      }
+    if (capitalShipModeRef.current && capitalShipRef.current) {
+      const ship = capitalShipRef.current;
 
-      if (p.hull > 0 && p.anchoredAsteroidId) {
-        const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
-        if (!asteroid) {
-          // Asteroid was destroyed or is missing! unanchor!
-          p.anchoredAsteroidId = undefined;
-          p.isDrilling = false;
-        } else {
-          // Anchored movement & rotation!
-          p.vx = asteroid.vx;
-          p.vy = asteroid.vy;
-          
-          // Compute ship position based on current asteroid coordinates, radius and rotation angle!
-          p.x = asteroid.x + Math.cos(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
-          p.y = asteroid.y + Math.sin(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
-          
-          // Optional: ship points outward or synchronizes with asteroid angle
-          p.angle = asteroid.angle + (p.anchorAngle || 0);
+      // Find Pilot station and who is assigned to it
+      const pilotStation = ship.stations.find(s => s.id === 'pilot');
+      let isThrusting = false;
+      let isReversing = false;
+      let rotateLeft = false;
+      let rotateRight = false;
 
-          // DRILLING CYCLE
-          if (p.isDrilling) {
-            const diffSettings = getDifficultySettings(difficultyRef.current);
-            p.drillTime = (p.drillTime || 0) + diffSettings.drillSpeedMultiplier;
-            // Spawn spark/soil particles flying from the drill contact point!
-            if (Math.random() < 0.4) {
-              const sparkAngle = p.angle + Math.PI + (Math.random() * 0.8 - 0.4);
-              particlesRef.current.push({
-                id: Math.random().toString(36).substring(2, 9),
-                x: p.x,
-                y: p.y,
-                vx: Math.cos(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vx,
-                vy: Math.sin(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vy,
-                color: asteroid.color || '#ffffff',
-                size: Math.random() * 3 + 1,
-                alpha: 1.0,
-                lifetime: 0,
-                maxLifetime: 15 + Math.floor(Math.random() * 10)
-              });
+      // Handle input based on Pilot's assignment
+      if (pilotStation && pilotStation.assignedPlayerId) {
+        const pId = pilotStation.assignedPlayerId;
+        const p = playersRef.current.find(pl => pl.id === pId);
+        if (p && p.hull > 0) {
+          if (p.inputSource === 'keyboard_p1') {
+            isThrusting = !!keysPressed.current['ArrowUp'];
+            isReversing = !!keysPressed.current['ArrowDown'];
+            rotateLeft = !!keysPressed.current['ArrowLeft'];
+            rotateRight = !!keysPressed.current['ArrowRight'];
+          } else if (p.inputSource === 'keyboard_p2') {
+            isThrusting = !!keysPressed.current['KeyW'];
+            isReversing = !!keysPressed.current['KeyS'];
+            rotateLeft = !!keysPressed.current['KeyA'];
+            rotateRight = !!keysPressed.current['KeyD'];
+          } else if (p.inputSource === 'gamepad' && p.gamepadIndex !== null) {
+            const gp = gamepads[p.gamepadIndex];
+            if (gp) {
+              const lX = gp.axes[0] || 0;
+              const lY = gp.axes[1] || 0;
+              const rX = gp.axes[2] || 0;
+              const rY = gp.axes[3] || 0;
+              const leftStickMagnitude = Math.hypot(lX, lY);
+              const rightStickMagnitude = Math.hypot(rX, rY);
+
+              if (rightStickMagnitude > 0.22) {
+                const targetAngle = Math.atan2(rY, rX);
+                let deltaAngle = targetAngle - ship.angle;
+                while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+                while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+                ship.angle += deltaAngle * 0.08;
+              }
+
+              isThrusting = gp.buttons[6]?.pressed || (gp.buttons[6]?.value || 0) > 0.15;
             }
-
-            // Every 75 frames (approx 1.25s), extract resources directly from the core!
-            if (p.drillTime >= 75) {
-              p.drillTime = 0;
-              // Extract ore based on asteroid type!
-              let oreType: OreType = 'crystal';
-              let amount = 1;
-              let txt = `+1 Krystal`;
-              let col = '#38bdf8';
-
-              if (asteroid.asteroidType === 'gold-rush') {
-                oreType = Math.random() < 0.5 ? 'diamond' : 'obsidian';
-                amount = Math.random() < 0.5 ? 3 : 2;
-                txt = `+${amount} Zlatá Horečka: ${oreType === 'diamond' ? 'Diamanty' : 'Obsidiány'}!`;
-                col = '#eab308';
-              } else if (asteroid.asteroidType === 'crystal') {
-                oreType = 'crystal';
-                amount = Math.random() < 0.4 ? 4 : 2;
-                txt = `+${amount} Společné Krystaly`;
-                col = '#c084fc';
-              } else if (asteroid.asteroidType === 'ice') {
-                oreType = 'diamond';
-                amount = 1;
-                txt = `+1 Vzácný Diamant`;
-                col = '#60a5fa';
-              } else if (asteroid.asteroidType === 'magma') {
-                oreType = 'obsidian';
-                amount = 1;
-                txt = `+1 Fialový Obsidián`;
-                col = '#f43f5e';
-              } else {
-                // Common
-                if (Math.random() < 0.15 && upgradesRef.current.magnetLevel >= 3) {
-                  oreType = 'diamond';
-                  txt = `+1 Vzácný Diamant`;
-                  col = '#60a5fa';
-                } else {
-                  oreType = 'crystal';
-                  amount = 1;
-                  txt = `+1 Krystal`;
-                  col = '#38bdf8';
-                }
-              }
-
-              // Award resource to running stats
-              if (oreType === 'crystal') {
-                setRunCrystals(prev => prev + amount);
-              } else if (oreType === 'diamond') {
-                setRunDiamonds(prev => prev + amount);
-              } else if (oreType === 'obsidian') {
-                setRunObsidian(prev => prev + amount);
-              }
-
-              addGainNotification(txt, col);
-              playCollectSound(oreType);
-              
-              // Damage asteroid HP slowly during deep drilling!
-              asteroid.hp -= 15;
-              if (asteroid.hp <= 0) {
-                // Destroy asteroid cleanly!
-                p.anchoredAsteroidId = undefined;
-                p.isDrilling = false;
-                triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size, asteroid.asteroidType);
-                // Also award player some extra points/crystals
-                setCurrentScore(prev => prev + asteroid.points);
-                playExplosionSound(asteroid.size);
-                asteroidsRef.current = asteroidsRef.current.filter(a => a.id !== asteroid.id);
-              }
-            }
-          }
-        }
-      } else if (p.hull > 0) {
-        const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
-        const baseMaxSpeed = (5 + (upgradesRef.current.engineLevel - 1) * 1.5) * prestigeBonusMultiplier;
-        const baseThrustPower = (0.14 + (upgradesRef.current.engineLevel - 1) * 0.07) * prestigeBonusMultiplier;
-        const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
-
-        // Custom Sector Hazards & Combo Overdrives speed calculations
-        const isPlayerFrozen = (p.frozenTimer !== undefined && p.frozenTimer > 0);
-        const frostMultiplier = 1 - ((p.frostLevel || 0) / 100) * 0.35;
-        const comboSpeedMult = (comboMultiplierRef.current >= 5) ? 1.15 : 1.0;
-        
-        const speedModifier = isPlayerFrozen ? 0 : (frostMultiplier * comboSpeedMult);
-        const maxSpeed = baseMaxSpeed * speedModifier;
-        const thrustPower = baseThrustPower * speedModifier;
-
-        if (p.thrusting && !isPlayerFrozen) {
-          const tAngle = (p.inputSource === 'gamepad' && p.gamepadThrustAngle !== undefined) ? p.gamepadThrustAngle : p.angle;
-          p.vx += Math.cos(tAngle) * thrustPower;
-          p.vy += Math.sin(tAngle) * thrustPower;
-
-          // Toxic Trail exhaust upgrade trigger
-          if (upgradesRef.current.toxicTrailLevel > 0 && Math.random() < 0.25) {
-            const backX = p.x - Math.cos(tAngle) * 20;
-            const backY = p.y - Math.sin(tAngle) * 20;
-            playerTrailBubblesRef.current.push({
-              id: Math.random().toString(),
-              x: backX,
-              y: backY,
-              radius: 20 + upgradesRef.current.toxicTrailLevel * 10,
-              damage: 0.25 * upgradesRef.current.toxicTrailLevel, // damage per frame
-              lifetime: 0,
-              maxLifetime: 60,
-              color: '#fb923c' // toxic glowing orange flame
-            });
-          }
-
-          // Jet exhaust particles with custom player primary color booster flares
-          const isHyperDrive = comboMultiplierRef.current >= 5;
-          const jetParticleChance = isHyperDrive ? 0.8 : 0.4;
-          if (Math.random() < jetParticleChance) {
-            const backAngle = tAngle + Math.PI + (Math.random() * 0.6 - 0.3);
-            const ex = p.x - Math.cos(tAngle) * 18;
-            const ey = p.y - Math.sin(tAngle) * 18;
-            particlesRef.current.push({
-              id: Math.random().toString(36).substring(2, 9),
-              x: ex,
-              y: ey,
-              vx: Math.cos(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vx * 0.4,
-              vy: Math.sin(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vy * 0.4,
-              color: isHyperDrive ? '#38bdf8' : (Math.random() < 0.35 ? p.color : p.glowColor), // sky blue for HyperDrive
-              size: Math.random() * (isHyperDrive ? 7.0 : 3.5) + (isHyperDrive ? 3.0 : 1.5),
-              alpha: 1.0,
-              lifetime: 0,
-              maxLifetime: (isHyperDrive ? 35 : 20) + Math.floor(Math.random() * 15),
-            });
-          }
-        } else if (p.reversing && !isPlayerFrozen) {
-          p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
-          p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
-        }
-
-        let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        if (speed > maxSpeed && maxSpeed > 0) {
-          p.vx = (p.vx / speed) * maxSpeed;
-          p.vy = (p.vy / speed) * maxSpeed;
-        }
-
-        p.vx *= inertiaFriction;
-        p.vy *= inertiaFriction;
-
-        // Persistent but fading thruster trail particles behind each player ship that reflect their unique color
-        const trailSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        if (trailSpeed > 0.2 && Math.random() < 0.6) {
-          const trailAngle = p.angle + Math.PI + (Math.random() * 0.2 - 0.1);
-          const tx = p.x - Math.cos(p.angle) * 14;
-          const ty = p.y - Math.sin(p.angle) * 14;
-          particlesRef.current.push({
-            id: Math.random().toString(36).substring(2, 9),
-            x: tx,
-            y: ty,
-            vx: -p.vx * 0.1 + Math.cos(trailAngle) * 0.5,
-            vy: -p.vy * 0.1 + Math.sin(trailAngle) * 0.5,
-            color: p.color,
-            size: Math.random() * 2.2 + 1.2,
-            alpha: 0.85,
-            lifetime: 0,
-            maxLifetime: 35 + Math.floor(Math.random() * 25),
-          });
-        }
-
-        // If the ship is in critical state, emit warning smoke/sparks
-        if (p.hull / p.maxHull <= 0.35) {
-          if (Math.random() < 0.25) {
-            particlesRef.current.push({
-              id: Math.random().toString(36).substring(2, 9),
-              x: p.x + (Math.random() - 0.5) * 14,
-              y: p.y + (Math.random() - 0.5) * 14,
-              vx: (Math.random() - 0.5) * 2,
-              vy: (Math.random() - 0.5) * 2,
-              color: Math.random() < 0.5 ? '#ef4444' : '#f97316',
-              size: Math.random() * 2.5 + 1.5,
-              alpha: 1.0,
-              lifetime: 0,
-              maxLifetime: 20 + Math.floor(Math.random() * 20),
-            });
-          }
-          if (Math.random() < 0.15) {
-            particlesRef.current.push({
-              id: Math.random().toString(36).substring(2, 9),
-              x: p.x + (Math.random() - 0.5) * 10,
-              y: p.y + (Math.random() - 0.5) * 10,
-              vx: (Math.random() - 0.5) * 0.8,
-              vy: (Math.random() - 0.5) * 0.8,
-              color: '#475569', // Slate smoke color
-              size: Math.random() * 5 + 3,
-              alpha: 0.7,
-              lifetime: 0,
-              maxLifetime: 40 + Math.floor(Math.random() * 30),
-            });
           }
         }
       } else {
-        // Slow down wreckage slow-drift
-        p.vx *= 0.96;
-        p.vy *= 0.96;
+        // --- AI AUTOPILOT ---
+        const nearestAst = asteroidsRef.current
+          .filter(a => a.hp > 0)
+          .reduce((near, ast) => {
+            const dist = Math.hypot(ast.x - ship.x, ast.y - ship.y);
+            if (!near || dist < near.dist) return { ast, dist };
+            return near;
+          }, null as { ast: Asteroid, dist: number } | null);
+
+        if (nearestAst && nearestAst.dist > 180) {
+          // Rotate ship slowly towards the nearest asteroid
+          const targetAngle = Math.atan2(nearestAst.ast.y - ship.y, nearestAst.ast.x - ship.x);
+          let diff = targetAngle - ship.angle;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          ship.angle += diff * 0.015; // slow rotation
+
+          // Move slowly towards it
+          const speedFactor = ship.type === 'explorer' ? 1.5 : 0.8;
+          ship.vx += Math.cos(ship.angle) * speedFactor * 0.05;
+          ship.vy += Math.sin(ship.angle) * speedFactor * 0.05;
+          isThrusting = true;
+        }
       }
 
-      if (!p.anchoredAsteroidId) {
-        p.x += p.vx;
-        p.y += p.vy;
+      // Handle rotation for keyboard pilot
+      if (rotateLeft) {
+        ship.angle -= 0.04;
+      } else if (rotateRight) {
+        ship.angle += 0.04;
       }
 
-      if (p.invulnerableTime > 0) {
-        p.invulnerableTime--;
+      // Handle speed limits and acceleration based on Ship Class
+      const baseMaxSpeed = ship.type === 'explorer' ? 8.5 : ship.type === 'war' ? 5.5 : ship.type === 'mining' ? 4.5 : 3.0;
+      const baseThrustPower = ship.type === 'explorer' ? 0.20 : ship.type === 'war' ? 0.12 : ship.type === 'mining' ? 0.09 : 0.06;
+      const inertiaFriction = 0.985;
+
+      if (isThrusting) {
+        ship.vx += Math.cos(ship.angle) * baseThrustPower;
+        ship.vy += Math.sin(ship.angle) * baseThrustPower;
+
+        // Exhaust particles
+        if (Math.random() < 0.4) {
+          const r = ship.type === 'mining' ? 65 : ship.type === 'war' ? 50 : ship.type === 'mothership' ? 85 : 35;
+          const backX = ship.x - Math.cos(ship.angle) * r;
+          const backY = ship.y - Math.sin(ship.angle) * r;
+          const backAngle = ship.angle + Math.PI + (Math.random() * 0.6 - 0.3);
+          particlesRef.current.push({
+            id: Math.random().toString(),
+            x: backX,
+            y: backY,
+            vx: Math.cos(backAngle) * (Math.random() * 3 + 1.25) + ship.vx * 0.4,
+            vy: Math.sin(backAngle) * (Math.random() * 3 + 1.25) + ship.vy * 0.4,
+            color: '#fb923c',
+            size: Math.random() * 5 + 2,
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 25 + Math.floor(Math.random() * 15),
+          });
+        }
+      } else if (isReversing) {
+        ship.vx -= Math.cos(ship.angle) * (baseThrustPower * 0.55);
+        ship.vy -= Math.sin(ship.angle) * (baseThrustPower * 0.55);
       }
-    });
+
+      let speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy);
+      if (speed > baseMaxSpeed) {
+        ship.vx = (ship.vx / speed) * baseMaxSpeed;
+        ship.vy = (ship.vy / speed) * baseMaxSpeed;
+      }
+
+      ship.vx *= inertiaFriction;
+      ship.vy *= inertiaFriction;
+
+      ship.x += ship.vx;
+      ship.y += ship.vy;
+
+      // --- GUNNERS UPDATE (LEFT & RIGHT) ---
+      ship.stations.forEach(st => {
+        if (st.id === 'gunner_left' || st.id === 'gunner_right') {
+          const assignee = playersRef.current.find(pl => pl.id === st.assignedPlayerId);
+          if (assignee && assignee.hull > 0) {
+            // Human player controls turret!
+            // Let them steer with rotation keys (Left/Right arrow keys for P1, A/D for P2) or right stick
+            let rotDir = 0;
+            let fires = false;
+            if (assignee.inputSource === 'keyboard_p1') {
+              if (keysPressed.current['ArrowLeft']) rotDir = -1;
+              if (keysPressed.current['ArrowRight']) rotDir = 1;
+              fires = !!(keysPressed.current['ControlRight'] || keysPressed.current['Space']);
+            } else if (assignee.inputSource === 'keyboard_p2') {
+              if (keysPressed.current['KeyA']) rotDir = -1;
+              if (keysPressed.current['KeyD']) rotDir = 1;
+              fires = !!(keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || keysPressed.current['Space']);
+            } else if (assignee.inputSource === 'gamepad' && assignee.gamepadIndex !== null) {
+              const gp = gamepads[assignee.gamepadIndex];
+              if (gp) {
+                const rX = gp.axes[2] || 0;
+                const rY = gp.axes[3] || 0;
+                if (Math.hypot(rX, rY) > 0.22) {
+                  st.angle = Math.atan2(rY, rX) - ship.angle; // keep angle relative
+                }
+                fires = gp.buttons[7]?.pressed || (gp.buttons[7]?.value || 0) > 0.15;
+              }
+            }
+
+            if (rotDir !== 0) {
+              st.angle += rotDir * 0.05;
+            }
+
+            if (fires) {
+              fireCapitalShipLaser(st.id, ship.angle + st.angle, assignee.color);
+            }
+          } else {
+            // --- AI AUTOMATIC GUNNER ---
+            // Scan for closest asteroid or pirate
+            const target = piratesRef.current.find(pir => pir.hp > 0) ||
+              asteroidsRef.current.find(ast => ast.hp > 0 && Math.hypot(ast.x - ship.x, ast.y - ship.y) < 400);
+
+            if (target) {
+              const targetAngle = Math.atan2(target.y - ship.y, target.x - ship.x);
+              // Smoothly steer turret towards target
+              let diff = (targetAngle - ship.angle) - st.angle;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              st.angle += diff * 0.05;
+
+              // Fire with AI rate (e.g., every 35 frames)
+              if (Math.random() < 0.04) {
+                fireCapitalShipLaser(st.id, ship.angle + st.angle, '#f87171', true);
+              }
+            }
+          }
+        }
+      });
+
+      // --- ENGINEER UPDATE ---
+      const engineerStation = ship.stations.find(s => s.id === 'engineer');
+      const engPlayer = engineerStation && engineerStation.assignedPlayerId
+        ? playersRef.current.find(pl => pl.id === engineerStation.assignedPlayerId)
+        : null;
+
+      if (engPlayer && engPlayer.hull > 0) {
+        // Engineer active! Fast shields recovery, plus active abilities triggered by standard engineer keys
+        if (ship.shield < ship.maxShield && Math.random() < 0.05) {
+          ship.shield = Math.min(ship.maxShield, ship.shield + 2);
+        }
+        // Active slow hull repair
+        if (ship.hull < ship.maxHull && Math.random() < 0.015) {
+          ship.hull = Math.min(ship.maxHull, ship.hull + 1);
+        }
+
+        // Handle ability triggers for the Engineer
+        if (engPlayer.inputSource === 'keyboard_p1') {
+          if (keysPressed.current['Digit9'] || keysPressed.current['Numpad9']) triggerChainLightning(engPlayer.playerNum);
+          if (keysPressed.current['Digit8'] || keysPressed.current['Numpad8']) triggerPulseWaveRing(engPlayer.playerNum);
+          if (keysPressed.current['Digit7'] || keysPressed.current['Numpad7']) triggerSuperMagnetVacuum(engPlayer.playerNum);
+        } else if (engPlayer.inputSource === 'keyboard_p2') {
+          if (keysPressed.current['KeyQ']) triggerChainLightning(engPlayer.playerNum);
+          if (keysPressed.current['KeyE']) triggerPulseWaveRing(engPlayer.playerNum);
+          if (keysPressed.current['KeyR']) triggerSuperMagnetVacuum(engPlayer.playerNum);
+        }
+      } else {
+        // AI engineer slow repairs
+        if (ship.shield < ship.maxShield && Math.random() < 0.02) {
+          ship.shield = Math.min(ship.maxShield, ship.shield + 1);
+        }
+        if (ship.hull < ship.maxHull && Math.random() < 0.004) {
+          ship.hull = Math.min(ship.maxHull, ship.hull + 1);
+        }
+      }
+
+      // --- MOTHERSHIP EXTRAS: ORBITING DRONES & HANGAR LAUNCH ---
+      if (ship.type === 'mothership') {
+        // Orbiting defensive drone fires standard lasers
+        if (Math.random() < 0.01) {
+          const droneAngle = Date.now() / 300;
+          const dx = ship.x + Math.cos(droneAngle) * 110;
+          const dy = ship.y + Math.sin(droneAngle) * 110;
+          const ast = asteroidsRef.current.find(a => Math.hypot(a.x - dx, a.y - dy) < 300);
+          if (ast) {
+            const fireAngle = Math.atan2(ast.y - dy, ast.x - dx);
+            lasersRef.current.push({
+              id: Math.random().toString(),
+              x: dx,
+              y: dy,
+              vx: Math.cos(fireAngle) * 10,
+              vy: Math.sin(fireAngle) * 10,
+              angle: fireAngle,
+              damage: 10,
+              isPiercing: false,
+              piercedAsteroidIds: [],
+              radius: 3,
+              width: 2,
+              color: '#d8b4fe',
+              lifetime: 0,
+              maxLifetime: 60
+            });
+            playLaserSound(0);
+          }
+        }
+      }
+
+      // --- WAR FRIGATE EXTRAS: HOMING MISSILE LAUNCH ---
+      if (ship.type === 'war') {
+        if (ship.rocketCooldown && ship.rocketCooldown > 0) {
+          ship.rocketCooldown--;
+        } else {
+          // Fire a homing rocket towards closest asteroid
+          const target = asteroidsRef.current.find(ast => Math.hypot(ast.x - ship.x, ast.y - ship.y) < 500);
+          if (target) {
+            ship.rocketCooldown = 180; // cooldown of 3 seconds
+            const fAngle = ship.angle + (Math.random() * 0.4 - 0.2);
+            lasersRef.current.push({
+              id: Math.random().toString(),
+              x: ship.x,
+              y: ship.y,
+              vx: Math.cos(fAngle) * 6,
+              vy: Math.sin(fAngle) * 6,
+              angle: fAngle,
+              damage: 60, // heavy explosive rocket damage
+              isPiercing: false,
+              piercedAsteroidIds: [],
+              radius: 6,
+              width: 5,
+              color: '#ef4444',
+              lifetime: 0,
+              maxLifetime: 120
+            });
+            addGainNotification("🚀 RAKETA ODPÁLENA!", "#ef4444");
+            playExplosionSound('small');
+          }
+        }
+      }
+
+      // Sync players to capital ship
+      syncCapitalShipAndPlayers();
+
+      // Decrement invulnerable timer for crew
+      playersRef.current.forEach(p => {
+        if (p.invulnerableTime > 0) {
+          p.invulnerableTime--;
+        }
+      });
+    } else {
+      playersRef.current.forEach(p => {
+        // If player is dead, reset anchoring!
+        if (p.hull <= 0) {
+          p.anchoredAsteroidId = undefined;
+          p.isDrilling = false;
+        }
+
+        if (p.hull > 0 && p.anchoredAsteroidId) {
+          const asteroid = asteroidsRef.current.find(a => a.id === p.anchoredAsteroidId);
+          if (!asteroid) {
+            // Asteroid was destroyed or is missing! unanchor!
+            p.anchoredAsteroidId = undefined;
+            p.isDrilling = false;
+          } else {
+            // Anchored movement & rotation!
+            p.vx = asteroid.vx;
+            p.vy = asteroid.vy;
+            
+            // Compute ship position based on current asteroid coordinates, radius and rotation angle!
+            p.x = asteroid.x + Math.cos(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
+            p.y = asteroid.y + Math.sin(asteroid.angle + (p.anchorAngle || 0)) * (p.anchorRadius || (asteroid.radius + p.radius));
+            
+            // Optional: ship points outward or synchronizes with asteroid angle
+            p.angle = asteroid.angle + (p.anchorAngle || 0);
+
+            // DRILLING CYCLE
+            if (p.isDrilling) {
+              const diffSettings = getDifficultySettings(difficultyRef.current);
+              p.drillTime = (p.drillTime || 0) + diffSettings.drillSpeedMultiplier;
+              // Spawn spark/soil particles flying from the drill contact point!
+              if (Math.random() < 0.4) {
+                const sparkAngle = p.angle + Math.PI + (Math.random() * 0.8 - 0.4);
+                particlesRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: p.x,
+                  y: p.y,
+                  vx: Math.cos(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vx,
+                  vy: Math.sin(sparkAngle) * (Math.random() * 2 + 1) + asteroid.vy,
+                  color: asteroid.color || '#ffffff',
+                  size: Math.random() * 3 + 1,
+                  alpha: 1.0,
+                  lifetime: 0,
+                  maxLifetime: 15 + Math.floor(Math.random() * 10)
+                });
+              }
+
+              // Every 75 frames (approx 1.25s), extract resources directly from the core!
+              if (p.drillTime >= 75) {
+                p.drillTime = 0;
+                // Extract ore based on asteroid type!
+                let oreType: OreType = 'crystal';
+                let amount = 1;
+                let txt = `+1 Krystal`;
+                let col = '#38bdf8';
+
+                if (asteroid.asteroidType === 'gold-rush') {
+                  oreType = Math.random() < 0.5 ? 'diamond' : 'obsidian';
+                  amount = Math.random() < 0.5 ? 3 : 2;
+                  txt = `+${amount} Zlatá Horečka: ${oreType === 'diamond' ? 'Diamanty' : 'Obsidiány'}!`;
+                  col = '#eab308';
+                } else if (asteroid.asteroidType === 'crystal') {
+                  oreType = 'crystal';
+                  amount = Math.random() < 0.4 ? 4 : 2;
+                  txt = `+${amount} Společné Krystaly`;
+                  col = '#c084fc';
+                } else if (asteroid.asteroidType === 'ice') {
+                  oreType = 'diamond';
+                  amount = 1;
+                  txt = `+1 Vzácný Diamant`;
+                  col = '#60a5fa';
+                } else if (asteroid.asteroidType === 'magma') {
+                  oreType = 'obsidian';
+                  amount = 1;
+                  txt = `+1 Fialový Obsidián`;
+                  col = '#f43f5e';
+                } else {
+                  // Common
+                  if (Math.random() < 0.15 && upgradesRef.current.magnetLevel >= 3) {
+                    oreType = 'diamond';
+                    txt = `+1 Vzácný Diamant`;
+                    col = '#60a5fa';
+                  } else {
+                    oreType = 'crystal';
+                    amount = 1;
+                    txt = `+1 Krystal`;
+                    col = '#38bdf8';
+                  }
+                }
+
+                // Award resource to running stats
+                if (oreType === 'crystal') {
+                  setRunCrystals(prev => prev + amount);
+                } else if (oreType === 'diamond') {
+                  setRunDiamonds(prev => prev + amount);
+                } else if (oreType === 'obsidian') {
+                  setRunObsidian(prev => prev + amount);
+                }
+
+                addGainNotification(txt, col);
+                playCollectSound(oreType);
+                
+                // Damage asteroid HP slowly during deep drilling!
+                asteroid.hp -= 15;
+                if (asteroid.hp <= 0) {
+                  // Destroy asteroid cleanly!
+                  p.anchoredAsteroidId = undefined;
+                  p.isDrilling = false;
+                  triggerSpawnAsteroidDrops(asteroid.x, asteroid.y, asteroid.size, asteroid.asteroidType);
+                  // Also award player some extra points/crystals
+                  setCurrentScore(prev => prev + asteroid.points);
+                  playExplosionSound(asteroid.size);
+                  asteroidsRef.current = asteroidsRef.current.filter(a => a.id !== asteroid.id);
+                }
+              }
+            }
+          }
+        } else if (p.hull > 0) {
+          const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
+          const baseMaxSpeed = (5 + (upgradesRef.current.engineLevel - 1) * 1.5) * prestigeBonusMultiplier;
+          const baseThrustPower = (0.14 + (upgradesRef.current.engineLevel - 1) * 0.07) * prestigeBonusMultiplier;
+          const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
+
+          // Custom Sector Hazards & Combo Overdrives speed calculations
+          const isPlayerFrozen = (p.frozenTimer !== undefined && p.frozenTimer > 0);
+          const frostMultiplier = 1 - ((p.frostLevel || 0) / 100) * 0.35;
+          const comboSpeedMult = (comboMultiplierRef.current >= 5) ? 1.15 : 1.0;
+          
+          const speedModifier = isPlayerFrozen ? 0 : (frostMultiplier * comboSpeedMult);
+          const maxSpeed = baseMaxSpeed * speedModifier;
+          const thrustPower = baseThrustPower * speedModifier;
+
+          if (p.thrusting && !isPlayerFrozen) {
+            const tAngle = (p.inputSource === 'gamepad' && p.gamepadThrustAngle !== undefined) ? p.gamepadThrustAngle : p.angle;
+            p.vx += Math.cos(tAngle) * thrustPower;
+            p.vy += Math.sin(tAngle) * thrustPower;
+
+            // Toxic Trail exhaust upgrade trigger
+            if (upgradesRef.current.toxicTrailLevel > 0 && Math.random() < 0.25) {
+              const backX = p.x - Math.cos(tAngle) * 20;
+              const backY = p.y - Math.sin(tAngle) * 20;
+              playerTrailBubblesRef.current.push({
+                id: Math.random().toString(),
+                x: backX,
+                y: backY,
+                radius: 20 + upgradesRef.current.toxicTrailLevel * 10,
+                damage: 0.25 * upgradesRef.current.toxicTrailLevel, // damage per frame
+                lifetime: 0,
+                maxLifetime: 60,
+                color: '#fb923c' // toxic glowing orange flame
+              });
+            }
+
+            // Jet exhaust particles with custom player primary color booster flares
+            const isHyperDrive = comboMultiplierRef.current >= 5;
+            const jetParticleChance = isHyperDrive ? 0.8 : 0.4;
+            if (Math.random() < jetParticleChance) {
+              const backAngle = tAngle + Math.PI + (Math.random() * 0.6 - 0.3);
+              const ex = p.x - Math.cos(tAngle) * 18;
+              const ey = p.y - Math.sin(tAngle) * 18;
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: ex,
+                y: ey,
+                vx: Math.cos(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vx * 0.4,
+                vy: Math.sin(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vy * 0.4,
+                color: isHyperDrive ? '#38bdf8' : (Math.random() < 0.35 ? p.color : p.glowColor), // sky blue for HyperDrive
+                size: Math.random() * (isHyperDrive ? 7.0 : 3.5) + (isHyperDrive ? 3.0 : 1.5),
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: (isHyperDrive ? 35 : 20) + Math.floor(Math.random() * 15),
+              });
+            }
+          } else if (p.reversing && !isPlayerFrozen) {
+            p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
+            p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
+          }
+
+          let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          if (speed > maxSpeed && maxSpeed > 0) {
+            p.vx = (p.vx / speed) * maxSpeed;
+            p.vy = (p.vy / speed) * maxSpeed;
+          }
+
+          p.vx *= inertiaFriction;
+          p.vy *= inertiaFriction;
+
+          // Persistent but fading thruster trail particles behind each player ship that reflect their unique color
+          const trailSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          if (trailSpeed > 0.2 && Math.random() < 0.6) {
+            const trailAngle = p.angle + Math.PI + (Math.random() * 0.2 - 0.1);
+            const tx = p.x - Math.cos(p.angle) * 14;
+            const ty = p.y - Math.sin(p.angle) * 14;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: tx,
+              y: ty,
+              vx: -p.vx * 0.1 + Math.cos(trailAngle) * 0.5,
+              vy: -p.vy * 0.1 + Math.sin(trailAngle) * 0.5,
+              color: p.color,
+              size: Math.random() * 2.2 + 1.2,
+              alpha: 0.85,
+              lifetime: 0,
+              maxLifetime: 35 + Math.floor(Math.random() * 25),
+            });
+          }
+
+          // If the ship is in critical state, emit warning smoke/sparks
+          if (p.hull / p.maxHull <= 0.35) {
+            if (Math.random() < 0.25) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x + (Math.random() - 0.5) * 14,
+                y: p.y + (Math.random() - 0.5) * 14,
+                vx: (Math.random() - 0.5) * 2,
+                vy: (Math.random() - 0.5) * 2,
+                color: Math.random() < 0.5 ? '#ef4444' : '#f97316',
+                size: Math.random() * 2.5 + 1.5,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 20 + Math.floor(Math.random() * 20),
+              });
+            }
+            if (Math.random() < 0.15) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x + (Math.random() - 0.5) * 10,
+                y: p.y + (Math.random() - 0.5) * 10,
+                vx: (Math.random() - 0.5) * 0.8,
+                vy: (Math.random() - 0.5) * 0.8,
+                color: '#475569', // Slate smoke color
+                size: Math.random() * 5 + 3,
+                alpha: 0.7,
+                lifetime: 0,
+                maxLifetime: 40 + Math.floor(Math.random() * 30),
+              });
+            }
+          }
+        } else {
+          // Slow down wreckage slow-drift
+          p.vx *= 0.96;
+          p.vy *= 0.96;
+        }
+
+        if (!p.anchoredAsteroidId) {
+          p.x += p.vx;
+          p.y += p.vy;
+        }
+
+        if (p.invulnerableTime > 0) {
+          p.invulnerableTime--;
+        }
+      });
+    }
 
     // --- COOPERATIVE PROXIMITY ATTRACTION (PULL STRAGGLERS) ---
     if (playersRef.current.length > 1) {
@@ -7247,6 +7808,319 @@ export default function App() {
         ctx.restore();
       };
 
+      const drawCapitalShip = (ship: CapitalShip) => {
+        const sx = ship.x - camX;
+        const sy = ship.y - camY;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        // Render shield outer boundary if active
+        if (ship.shield > 0) {
+          ctx.save();
+          ctx.strokeStyle = ship.type === 'war' ? 'rgba(56, 189, 248, 0.4)' : 'rgba(96, 165, 250, 0.4)';
+          ctx.lineWidth = 3.5;
+          ctx.shadowBlur = 12;
+          ctx.shadowColor = '#60a5fa';
+          ctx.beginPath();
+          ctx.arc(0, 0, ship.radius + 18, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Rotate ctx for ship's own heading
+        ctx.save();
+        ctx.rotate(ship.angle);
+
+        // Render specific ship geometries based on type
+        ctx.strokeStyle = '#94a3b8'; // Slate grey default hull outline
+        ctx.lineWidth = 3.0;
+        ctx.fillStyle = '#0f172a'; // Deep slate fill
+
+        if (ship.type === 'mining') {
+          // Boxy Mining Cruiser
+          ctx.beginPath();
+          ctx.moveTo(ship.radius, -18);
+          ctx.lineTo(ship.radius, 18);
+          ctx.lineTo(ship.radius - 20, 32);
+          ctx.lineTo(-ship.radius + 15, 32);
+          ctx.lineTo(-ship.radius, 15);
+          ctx.lineTo(-ship.radius, -15);
+          ctx.lineTo(-ship.radius + 15, -32);
+          ctx.lineTo(ship.radius - 20, -32);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Render a big drill at the front
+          ctx.save();
+          ctx.translate(ship.radius + 5, 0);
+          ctx.rotate(Date.now() / 60);
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.fillStyle = '#475569';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(0, -10);
+          ctx.lineTo(15, 0);
+          ctx.lineTo(0, 10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+
+          // Draw cargo holds
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-ship.radius + 30, -20, 30, 40);
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.strokeRect(-ship.radius + 30, -20, 30, 40);
+
+        } else if (ship.type === 'war') {
+          // Sleek militaristic War Frigate
+          ctx.beginPath();
+          ctx.moveTo(ship.radius + 10, 0); // sharp pointed nose
+          ctx.lineTo(ship.radius - 20, -28);
+          ctx.lineTo(-ship.radius + 20, -28);
+          ctx.lineTo(-ship.radius, -45); // wings
+          ctx.lineTo(-ship.radius + 10, -15);
+          ctx.lineTo(-ship.radius + 10, 15);
+          ctx.lineTo(-ship.radius, 45); // wings
+          ctx.lineTo(-ship.radius + 20, 28);
+          ctx.lineTo(ship.radius - 20, 28);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Red glowing war strips
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.moveTo(0, -20);
+          ctx.lineTo(ship.radius - 15, -5);
+          ctx.moveTo(0, 20);
+          ctx.lineTo(ship.radius - 15, 5);
+          ctx.stroke();
+
+        } else if (ship.type === 'mothership') {
+          // Colossal spherical/hexagonal mothership
+          ctx.beginPath();
+          for (let i = 0; i < 8; i++) {
+            const angle = (i * Math.PI) / 4;
+            const rx = Math.cos(angle) * ship.radius;
+            const ry = Math.sin(angle) * ship.radius;
+            if (i === 0) ctx.moveTo(rx, ry);
+            else ctx.lineTo(rx, ry);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Outer glowing runway lights
+          const pulse = Math.abs(Math.sin(Date.now() / 200));
+          ctx.fillStyle = `rgba(168, 85, 247, ${0.4 + pulse * 0.6})`;
+          ctx.beginPath();
+          ctx.arc(-25, -25, 6, 0, Math.PI * 2);
+          ctx.arc(25, -25, 6, 0, Math.PI * 2);
+          ctx.arc(-25, 25, 6, 0, Math.PI * 2);
+          ctx.arc(25, 25, 6, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Central core circle
+          ctx.strokeStyle = '#a855f7';
+          ctx.beginPath();
+          ctx.arc(0, 0, 20, 0, Math.PI * 2);
+          ctx.stroke();
+
+        } else if (ship.type === 'explorer') {
+          // Streamlined sensor dish explorer
+          ctx.beginPath();
+          ctx.moveTo(ship.radius + 5, 0);
+          ctx.lineTo(ship.radius - 15, -18);
+          ctx.lineTo(-ship.radius + 10, -18);
+          ctx.lineTo(-ship.radius, 0);
+          ctx.lineTo(-ship.radius + 10, 18);
+          ctx.lineTo(ship.radius - 15, 18);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Sensor dish at the nose
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.arc(ship.radius - 3, 0, 8, -Math.PI / 3, Math.PI / 3);
+          ctx.stroke();
+        }
+
+        // Draw engines at the back of the ship
+        ctx.fillStyle = '#fb923c';
+        ctx.fillRect(-ship.radius - 4, -12, 6, 8);
+        ctx.fillRect(-ship.radius - 4, 4, 6, 8);
+
+        // --- DRAW INTERNAL STATIONS IN THE SHIP SPACE ---
+        ship.stations.forEach(st => {
+          let sx_st = 0;
+          let sy_st = 0;
+
+          if (st.id === 'pilot') {
+            sx_st = ship.radius * 0.48;
+            sy_st = 0;
+          } else if (st.id === 'gunner_left') {
+            sx_st = 0;
+            sy_st = -ship.radius * 0.45;
+          } else if (st.id === 'gunner_right') {
+            sx_st = 0;
+            sy_st = ship.radius * 0.45;
+          } else if (st.id === 'engineer') {
+            sx_st = -ship.radius * 0.48;
+            sy_st = 0;
+          }
+
+          // Station terminal ring
+          ctx.save();
+          ctx.translate(sx_st, sy_st);
+          
+          let stationColor = '#64748b'; // Slate unassigned color
+          let glowColor = 'transparent';
+          let assignee = null;
+
+          if (st.assignedPlayerId) {
+            assignee = playersRef.current.find(p => p.id === st.assignedPlayerId);
+            if (assignee && assignee.hull > 0) {
+              stationColor = assignee.color;
+              glowColor = assignee.glowColor;
+            }
+          }
+
+          ctx.strokeStyle = stationColor;
+          ctx.fillStyle = '#1e293b';
+          ctx.lineWidth = 2.0;
+          if (st.assignedPlayerId) {
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = glowColor;
+          }
+          ctx.beginPath();
+          ctx.arc(0, 0, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Draw terminal screen light inside the ring
+          ctx.fillStyle = st.assignedPlayerId ? stationColor : '#475569';
+          ctx.beginPath();
+          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+        });
+
+        // --- DRAW TURRETS DRAWING SECTION (LEFT & RIGHT) ---
+        ship.stations.forEach(st => {
+          if (st.id === 'gunner_left' || st.id === 'gunner_right') {
+            const sideY = st.id === 'gunner_left' ? -ship.radius * 0.8 : ship.radius * 0.8;
+            
+            ctx.save();
+            ctx.translate(0, sideY);
+            // Rotate turret by st.angle (relative angle)
+            ctx.rotate(st.angle);
+
+            // Draw turret base
+            ctx.fillStyle = '#334155';
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, 11, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw barrels
+            ctx.fillStyle = '#64748b';
+            ctx.strokeStyle = '#cbd5e1';
+            // double barrels
+            ctx.fillRect(0, -5, 18, 3);
+            ctx.strokeRect(0, -5, 18, 3);
+            ctx.fillRect(0, 2, 18, 3);
+            ctx.strokeRect(0, 2, 18, 3);
+
+            ctx.restore();
+          }
+        });
+
+        ctx.restore(); // end of local rotated scope
+
+        // --- DRAW HULL & SHIELDS HEALTH BARS ---
+        const barWidth = 100;
+        const barHeight = 6;
+        const startX = -barWidth / 2;
+        const startY = -ship.radius - 28;
+
+        // Draw Background
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+        ctx.fillRect(startX, startY, barWidth, barHeight);
+        ctx.fillRect(startX, startY - 8, barWidth, barHeight);
+
+        // Hull Fill (Red/Green)
+        const hullPercent = Math.max(0, Math.min(1, ship.hull / ship.maxHull));
+        ctx.fillStyle = hullPercent > 0.45 ? '#10b981' : hullPercent > 0.20 ? '#eab308' : '#ef4444';
+        ctx.fillRect(startX, startY, barWidth * hullPercent, barHeight);
+
+        // Shields Fill (Blue)
+        if (ship.maxShield > 0) {
+          const shieldPercent = Math.max(0, Math.min(1, ship.shield / ship.maxShield));
+          ctx.fillStyle = '#3b82f6';
+          ctx.fillRect(startX, startY - 8, barWidth * shieldPercent, barHeight);
+        }
+
+        // Draw labels
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '900 10px monospace';
+        ctx.textAlign = 'center';
+        let CzechClass = 'TĚŽAŘSKÝ KŘIŽNÍK';
+        if (ship.type === 'war') CzechClass = 'VÁLEČNÁ FREGATA';
+        else if (ship.type === 'mothership') CzechClass = 'MATEŘSKÁ LOĎ';
+        else if (ship.type === 'explorer') CzechClass = 'PRŮZKUMNÍK';
+
+        ctx.fillText(CzechClass, 0, -ship.radius - 40);
+
+        // Active Player Labels orbiting the ship
+        ship.stations.forEach(st => {
+          if (st.assignedPlayerId) {
+            const pl = playersRef.current.find(p => p.id === st.assignedPlayerId);
+            if (pl && pl.hull > 0) {
+              ctx.save();
+              ctx.fillStyle = pl.color;
+              ctx.font = 'bold 9px monospace';
+              let nameOffset = 0;
+              if (st.id === 'pilot') nameOffset = ship.radius + 15;
+              else if (st.id === 'gunner_left') nameOffset = -ship.radius - 10;
+              else if (st.id === 'gunner_right') nameOffset = ship.radius + 10;
+              else nameOffset = -ship.radius - 15;
+
+              // compute text position relative to ship
+              let tx = 0;
+              let ty = 0;
+              if (st.id === 'pilot') {
+                tx = Math.cos(ship.angle) * nameOffset;
+                ty = Math.sin(ship.angle) * nameOffset;
+              } else if (st.id === 'gunner_left') {
+                tx = Math.cos(ship.angle - Math.PI / 2) * nameOffset;
+                ty = Math.sin(ship.angle - Math.PI / 2) * nameOffset;
+              } else if (st.id === 'gunner_right') {
+                tx = Math.cos(ship.angle + Math.PI / 2) * nameOffset;
+                ty = Math.sin(ship.angle + Math.PI / 2) * nameOffset;
+              } else {
+                tx = Math.cos(ship.angle + Math.PI) * nameOffset;
+                ty = Math.sin(ship.angle + Math.PI) * nameOffset;
+              }
+
+              ctx.textAlign = 'center';
+              ctx.fillText(`${pl.name.replace(" (P_Aktivní)", "").replace(" (P_WASD)", "")}: ${st.name.split(' ')[1]}`, tx, ty);
+              ctx.restore();
+            }
+          }
+        });
+
+        ctx.restore();
+      };
+
       const drawPlayerShipWrecked = (p: any, playerNum: 1 | 2, reviveProgress: number) => {
         const sx = p.x - camX;
         const sy = p.y - camY;
@@ -7473,18 +8347,24 @@ export default function App() {
         ctx.restore();
       }
 
-      playersRef.current.forEach(p => {
-        if (p.hull > 0) {
-          // Skip drawing individual ship if docked inside the Carrier!
-          if (dockedPlayerIdsRef.current.includes(p.id)) return;
-          const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
-          drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
-        } else {
-          if (playersRef.current.length > 1) {
-            drawPlayerShipWrecked(p, p.playerNum, p.reviveTimer);
-          }
+      if (capitalShipModeRef.current && capitalShipRef.current) {
+        if (capitalShipRef.current.hull > 0) {
+          drawCapitalShip(capitalShipRef.current);
         }
-      });
+      } else {
+        playersRef.current.forEach(p => {
+          if (p.hull > 0) {
+            // Skip drawing individual ship if docked inside the Carrier!
+            if (dockedPlayerIdsRef.current.includes(p.id)) return;
+            const pMaxShield = 100 + (upgradesRef.current.shieldLevel - 1) * 35;
+            drawPlayerShip(p, p.playerNum, p.hull, p.shield, pMaxShield);
+          } else {
+            if (playersRef.current.length > 1) {
+              drawPlayerShipWrecked(p, p.playerNum, p.reviveTimer);
+            }
+          }
+        });
+      }
 
       // --- G. ACTIVE MAGNET BOUNDARY GLOW CIRCLE ---
       if (upgradesRef.current.magnetLevel > 1 && (keysPressed.current['ShiftLeft'] || keysPressed.current['ShiftRight'])) {
@@ -8856,6 +9736,141 @@ export default function App() {
                     lowPerformanceMode ? 'translate-x-6' : 'translate-x-0'
                   }`} />
                 </button>
+              </div>
+
+              {/* Capital Ship Mode Toggle and Class Selector */}
+              <div className="space-y-3 pt-2.5 border-t border-slate-900">
+                <label className="text-xs font-bold text-slate-300 block">Formace flotily a styl lodi:</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapitalShipMode(false);
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      !capitalShipMode
+                        ? 'bg-slate-900 border-indigo-500 text-slate-200 shadow-[0_0_12px_rgba(99,102,241,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">🛸</span>
+                      <span className="font-bold tracking-tight text-indigo-300">FLOTILA MALÝCH LODÍ</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Klasický styl. Každý hráč ovládá a střílí ze své vlastní malé obratné lodičky.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapitalShipMode(true);
+                      playLaserSound(0);
+                    }}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
+                      capitalShipMode
+                        ? 'bg-indigo-950/30 border-cyan-500 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.15)] font-bold'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">🚢</span>
+                      <span className="font-bold tracking-tight text-cyan-300">SPOLEČNÁ VELKÁ LOĎ (MULTICREW)</span>
+                    </div>
+                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
+                      Styl Lovers in a Dangerous Spacetime. Všichni sdílí jednu velkou loď, obsazují stanice (Kormidelník, Střelci, Inženýr) a doplňují se!
+                    </div>
+                  </button>
+                </div>
+
+                {capitalShipMode && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-3 bg-slate-950/80 rounded-xl border border-slate-850/80 space-y-2"
+                  >
+                    <span className="text-cyan-400 font-bold uppercase tracking-wider text-[9px] block">Vyberte třídu Velké Lodě:</span>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCapitalShipType('mining');
+                          playLaserSound(0);
+                        }}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedCapitalShipType === 'mining'
+                            ? 'bg-amber-950/20 border-amber-500 text-amber-300 font-bold'
+                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        <span className="font-bold">⛏️ Těžařský křižník</span>
+                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
+                          • Trvanlivost: Vysoká (600 HP)<br/>
+                          • Vrták, Silný magnet a extra náklad
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCapitalShipType('war');
+                          playLaserSound(0);
+                        }}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedCapitalShipType === 'war'
+                            ? 'bg-red-950/20 border-red-500 text-red-300 font-bold'
+                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        <span className="font-bold">🚀 Válečná fregata</span>
+                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
+                          • Trvanlivost: Střední (500 HP, 350 štít)<br/>
+                          • 3x laser + automatický raketomet
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCapitalShipType('mothership');
+                          playLaserSound(0);
+                        }}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedCapitalShipType === 'mothership'
+                            ? 'bg-purple-950/20 border-purple-500 text-purple-300 font-bold'
+                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        <span className="font-bold">🛰️ Mateřská loď (Stoupa)</span>
+                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
+                          • Trvanlivost: Obrovská (800 HP, 400 štít)<br/>
+                          • 4x stanice + drony, hangáry
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCapitalShipType('explorer');
+                          playLaserSound(0);
+                        }}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedCapitalShipType === 'explorer'
+                            ? 'bg-emerald-950/20 border-emerald-500 text-emerald-300 font-bold'
+                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        <span className="font-bold">📡 Průzkumník</span>
+                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
+                          • Trvanlivost: Menší (300 HP)<br/>
+                          • Rychlý, nízká spotřeba, laser + vrták
+                        </p>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
               </div>
             </div>
 
