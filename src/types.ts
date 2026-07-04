@@ -96,6 +96,9 @@ export interface Upgrades {
   blackHoleActivator: number;      // 0 to 1 (0 = Not acquired, 1 = Acquired)
   miningDronesLevel: number;       // 0 to 3 (Automatic mining drones level)
   omegaDestructorLevel: number;    // 0 to 1 (Super expensive ultimate upgrade)
+  quantumMirrorLevel: number;      // 0 to 1 (Quantum Mirror upgrade)
+  toxicTrailLevel: number;         // 0 to 1 (Toxic/Reactive Trail exhaust upgrade)
+  salvageMagnetLevel: number;      // 0 to 1 (Salvage Magnet / Combo scaling upgrade)
 }
 
 export interface PlayerStats {
@@ -140,6 +143,86 @@ export interface Player {
   isDrilling?: boolean;
   drillTime?: number;
   gamepadThrustAngle?: number;
+  frostLevel?: number;   // 0 to 100 for freezing hazards
+  frozenTimer?: number;  // cooldown frames when ship is frozen
+}
+
+export interface LavaProjectile {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  color: string;
+  damage: number;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface BlizzardZone {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  speed: number;
+}
+
+export interface BossGuidedFireball {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  color: string;
+  damage: number;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface FireTrail {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface BossFreezingPulse {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  speed: number;
+  damage: number;
+  hitPlayerIds: string[];
+}
+
+export interface BossEscortDrone {
+  id: string;
+  x: number;
+  y: number;
+  angle: number;
+  orbitOffset: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+}
+
+export interface PlayerTrailBubble {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  damage: number;
+  lifetime: number;
+  maxLifetime: number;
+  color: string;
 }
 
 export interface Pirate {

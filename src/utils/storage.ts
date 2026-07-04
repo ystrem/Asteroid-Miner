@@ -22,6 +22,9 @@ const DEFAULT_UPGRADES: Upgrades = {
   blackHoleActivator: 0,
   miningDronesLevel: 0,
   omegaDestructorLevel: 0,
+  quantumMirrorLevel: 0,
+  toxicTrailLevel: 0,
+  salvageMagnetLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {

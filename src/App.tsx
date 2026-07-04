@@ -20,7 +20,14 @@ import {
   Pirate,
   PirateLaser,
   SockEntity,
-  Boss
+  Boss,
+  LavaProjectile,
+  BlizzardZone,
+  BossGuidedFireball,
+  BossFreezingPulse,
+  BossEscortDrone,
+  FireTrail,
+  PlayerTrailBubble
 } from './types';
 import { 
   playLaserSound, 
@@ -309,6 +316,17 @@ export default function App() {
   const solarStormTimeRef = useRef<number>(1500); // Ticks until next storm warning/check
   const solarStormDurationRef = useRef<number>(0); // Duration of active storm
   const solarStormDirectionRef = useRef<number>(Math.PI / 2); // Downward wind (pi/2)
+
+  const lavaProjectilesRef = useRef<LavaProjectile[]>([]);
+  const blizzardZonesRef = useRef<BlizzardZone[]>([]);
+  const bossGuidedFireballsRef = useRef<BossGuidedFireball[]>([]);
+  const bossFreezingPulsesRef = useRef<BossFreezingPulse[]>([]);
+  const bossEscortDronesRef = useRef<BossEscortDrone[]>([]);
+  const fireTrailsRef = useRef<FireTrail[]>([]);
+  const playerTrailBubblesRef = useRef<PlayerTrailBubble[]>([]);
+  const emStormTimerRef = useRef<number>(0);
+  const emStormActiveRef = useRef<boolean>(false);
+  const emStormNextTriggerRef = useRef<number>(600); // Ticks until next EM storm
 
   const piratesRef = useRef<Pirate[]>([]);
   const pirateLasersRef = useRef<PirateLaser[]>([]);
@@ -1105,6 +1123,16 @@ export default function App() {
     lasersRef.current = [];
     socksRef.current = [];
     dronesRef.current = [];
+    lavaProjectilesRef.current = [];
+    blizzardZonesRef.current = [];
+    bossGuidedFireballsRef.current = [];
+    bossFreezingPulsesRef.current = [];
+    bossEscortDronesRef.current = [];
+    fireTrailsRef.current = [];
+    playerTrailBubblesRef.current = [];
+    emStormTimerRef.current = 0;
+    emStormActiveRef.current = false;
+    emStormNextTriggerRef.current = 600; // Ticks until next EM storm (10s)
     wormholeRef.current = null;
     oresRef.current = [];
     particlesRef.current = [];
@@ -1389,6 +1417,9 @@ export default function App() {
       blackHoleActivator: 0, // Consumed!
       miningDronesLevel: 0,
       omegaDestructorLevel: 0, // Consumed!
+      quantumMirrorLevel: 0,
+      toxicTrailLevel: 0,
+      salvageMagnetLevel: 0,
     };
 
     setUpgrades(cleanUpgrades);
@@ -1600,6 +1631,7 @@ export default function App() {
   // --- LASER BULLET EMISSION INTER ACTION ---
   const fireActiveLaser = (player: Player, playerNum: number) => {
     const now = Date.now();
+    const initialLasersCount = lasersRef.current.length;
     
     // Fire rates depend on weapon tier
     let cooldown = 350;
@@ -1616,8 +1648,19 @@ export default function App() {
       cooldown = 110;
     }
 
+    // Combo x10 Super-Charged Lasers fire rate override
+    if (comboMultiplierRef.current >= 10) {
+      cooldown = Math.min(cooldown, 70); // lightning-fast rapid fire
+    }
+
     if (now - player.lastFired < cooldown) return;
     player.lastFired = now;
+
+    // Melt Frost on firing lasers ("dokud ji hráč nezahřeje střelbou z laserů")
+    if (player.frostLevel && player.frostLevel > 0) {
+      player.frostLevel = Math.max(0, player.frostLevel - 16);
+      addGainNotification("🔥 ROZTÁVÁNÍ NÁMRAZY!", player.color);
+    }
 
     // Laser properties
     let speed = 9;
@@ -1875,6 +1918,18 @@ export default function App() {
           isHeated: true, // triggers trail and custom visuals
         };
         lasersRef.current.push(extraLaser);
+      }
+    }
+
+    // Apply Combo x10 Super-Charged Lasers overdrive modifier
+    if (comboMultiplierRef.current >= 10) {
+      for (let i = initialLasersCount; i < lasersRef.current.length; i++) {
+        const laser = lasersRef.current[i];
+        laser.isPiercing = true;
+        laser.color = '#f43f5e'; // Super-charged glowing rose energy beam
+        laser.damage *= 1.35; // 35% damage boost
+        laser.width *= 1.5;
+        laser.radius *= 1.35;
       }
     }
   };
@@ -2168,17 +2223,44 @@ export default function App() {
         }
       } else if (p.hull > 0) {
         const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
-        const maxSpeed = (5 + (upgradesRef.current.engineLevel - 1) * 1.5) * prestigeBonusMultiplier;
-        const thrustPower = (0.14 + (upgradesRef.current.engineLevel - 1) * 0.07) * prestigeBonusMultiplier;
+        const baseMaxSpeed = (5 + (upgradesRef.current.engineLevel - 1) * 1.5) * prestigeBonusMultiplier;
+        const baseThrustPower = (0.14 + (upgradesRef.current.engineLevel - 1) * 0.07) * prestigeBonusMultiplier;
         const inertiaFriction = 0.982 + (upgradesRef.current.engineLevel - 1) * 0.003;
 
-        if (p.thrusting) {
+        // Custom Sector Hazards & Combo Overdrives speed calculations
+        const isPlayerFrozen = (p.frozenTimer !== undefined && p.frozenTimer > 0);
+        const frostMultiplier = 1 - ((p.frostLevel || 0) / 100) * 0.35;
+        const comboSpeedMult = (comboMultiplierRef.current >= 5) ? 1.15 : 1.0;
+        
+        const speedModifier = isPlayerFrozen ? 0 : (frostMultiplier * comboSpeedMult);
+        const maxSpeed = baseMaxSpeed * speedModifier;
+        const thrustPower = baseThrustPower * speedModifier;
+
+        if (p.thrusting && !isPlayerFrozen) {
           const tAngle = (p.inputSource === 'gamepad' && p.gamepadThrustAngle !== undefined) ? p.gamepadThrustAngle : p.angle;
           p.vx += Math.cos(tAngle) * thrustPower;
           p.vy += Math.sin(tAngle) * thrustPower;
 
+          // Toxic Trail exhaust upgrade trigger
+          if (upgradesRef.current.toxicTrailLevel > 0 && Math.random() < 0.25) {
+            const backX = p.x - Math.cos(tAngle) * 20;
+            const backY = p.y - Math.sin(tAngle) * 20;
+            playerTrailBubblesRef.current.push({
+              id: Math.random().toString(),
+              x: backX,
+              y: backY,
+              radius: 20 + upgradesRef.current.toxicTrailLevel * 10,
+              damage: 0.25 * upgradesRef.current.toxicTrailLevel, // damage per frame
+              lifetime: 0,
+              maxLifetime: 60,
+              color: '#fb923c' // toxic glowing orange flame
+            });
+          }
+
           // Jet exhaust particles with custom player primary color booster flares
-          if (Math.random() < 0.4) {
+          const isHyperDrive = comboMultiplierRef.current >= 5;
+          const jetParticleChance = isHyperDrive ? 0.8 : 0.4;
+          if (Math.random() < jetParticleChance) {
             const backAngle = tAngle + Math.PI + (Math.random() * 0.6 - 0.3);
             const ex = p.x - Math.cos(tAngle) * 18;
             const ey = p.y - Math.sin(tAngle) * 18;
@@ -2186,22 +2268,22 @@ export default function App() {
               id: Math.random().toString(36).substring(2, 9),
               x: ex,
               y: ey,
-              vx: Math.cos(backAngle) * (Math.random() * 3 + 1.25) + p.vx * 0.4,
-              vy: Math.sin(backAngle) * (Math.random() * 3 + 1.25) + p.vy * 0.4,
-              color: Math.random() < 0.35 ? p.color : p.glowColor,
-              size: Math.random() * 3.5 + 1.5,
+              vx: Math.cos(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vx * 0.4,
+              vy: Math.sin(backAngle) * (Math.random() * (isHyperDrive ? 5 : 3) + 1.25) + p.vy * 0.4,
+              color: isHyperDrive ? '#38bdf8' : (Math.random() < 0.35 ? p.color : p.glowColor), // sky blue for HyperDrive
+              size: Math.random() * (isHyperDrive ? 7.0 : 3.5) + (isHyperDrive ? 3.0 : 1.5),
               alpha: 1.0,
               lifetime: 0,
-              maxLifetime: 20 + Math.floor(Math.random() * 15),
+              maxLifetime: (isHyperDrive ? 35 : 20) + Math.floor(Math.random() * 15),
             });
           }
-        } else if (p.reversing) {
+        } else if (p.reversing && !isPlayerFrozen) {
           p.vx -= Math.cos(p.angle) * (thrustPower * 0.55);
           p.vy -= Math.sin(p.angle) * (thrustPower * 0.55);
         }
 
         let speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        if (speed > maxSpeed) {
+        if (speed > maxSpeed && maxSpeed > 0) {
           p.vx = (p.vx / speed) * maxSpeed;
           p.vy = (p.vy / speed) * maxSpeed;
         }
@@ -3012,6 +3094,33 @@ export default function App() {
         if (p.hull > 0 && p.invulnerableTime <= 0 && pl.lifetime < pl.maxLifetime) {
           const d = Math.hypot(p.x - pl.x, p.y - pl.y);
           if (d < p.radius + pl.radius) {
+            // Quantum Mirror passive reflex shield module
+            if (upgradesRef.current.quantumMirrorLevel > 0 && p.shield > 0 && Math.random() < 0.15) {
+              addGainNotification(`🛡️ KVANTOVÉ ZRCADLO: Střela odražena zpět!`, '#818cf8');
+              addCombatLogMessage(`🛡️ ${p.name}: Kvantové zrcadlo odrazilo nepřátelskou střelu!`, '#818cf8');
+              
+              lasersRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x,
+                y: p.y,
+                vx: -pl.vx * 1.35,
+                vy: -pl.vy * 1.35,
+                angle: Math.atan2(-pl.vy, -pl.vx),
+                damage: 22, // significant reflected counter damage
+                isPiercing: false,
+                piercedAsteroidIds: [],
+                radius: 5,
+                width: 4,
+                color: '#818cf8', // Cosmic indigo reflected blast
+                lifetime: 0,
+                maxLifetime: 65,
+              });
+
+              pl.lifetime = pl.maxLifetime; // destroy the incoming laser
+              playLaserSound(0);
+              return; // Skip normal hit handling
+            }
+
             const diffSettings = getDifficultySettings(difficultyRef.current);
             const pirateDmgShield = Math.max(1, Math.round(14 * diffSettings.pirateLaserDamageMultiplier));
             const pirateDmgHull = Math.max(1, Math.round(8 * diffSettings.pirateLaserDamageMultiplier));
@@ -3042,6 +3151,633 @@ export default function App() {
 
     // Remove stale pirate lasers
     pirateLasersRef.current = pirateLasersRef.current.filter(pl => pl.lifetime < pl.maxLifetime);
+
+    // =========================================================================
+    // --- CUSTOM SECTOR ANOMALIES & TACTICAL UPGRADE DYNAMIC UPDATES ---
+    // =========================================================================
+
+    // 1. Sektor Beta: Magmatické peklo (Lava projectile eruptions)
+    if (selectedMapRef.current === 'magma') {
+      // Periodic chance of a solar eruption (approx. every 8-10 seconds)
+      if (Math.random() < 0.002) {
+        addGainNotification("🌋 DETEKOVÁNA SOLÁRNÍ ERUPCE!", "#fb923c");
+        addCombatLogMessage("🌋 Sektor Beta: Solární erupce vymrštila horké lávové projektily!", "#fb923c");
+        
+        const camX = lastCamXRef.current;
+        const camY = lastCamYRef.current;
+        const count = 7 + Math.floor(Math.random() * 5);
+        for (let i = 0; i < count; i++) {
+          const angle = Math.PI * 0.25 + Math.random() * Math.PI * 0.5; // downward angle
+          const speed = Math.random() * 4.5 + 3.0;
+          const spawnX = camX + (Math.random() * 1200 - 600) - Math.cos(angle) * 350;
+          const spawnY = camY - 550; // spawn just above viewport
+          
+          lavaProjectilesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: spawnX,
+            y: spawnY,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            radius: Math.random() * 10 + 9, // 9 to 19px
+            color: Math.random() < 0.5 ? '#f97316' : '#ef4444',
+            damage: 18,
+            lifetime: 0,
+            maxLifetime: 300,
+          });
+        }
+      }
+    }
+
+    // Update Lava Projectiles
+    lavaProjectilesRef.current.forEach(lp => {
+      lp.x += lp.vx;
+      lp.y += lp.vy;
+      lp.lifetime++;
+
+      // Flame trails
+      if (Math.random() < 0.35) {
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: lp.x + (Math.random() - 0.5) * lp.radius,
+          y: lp.y + (Math.random() - 0.5) * lp.radius,
+          vx: -lp.vx * 0.2 + (Math.random() - 0.5) * 0.8,
+          vy: -lp.vy * 0.2 + (Math.random() - 0.5) * 0.8,
+          color: lp.color,
+          size: Math.random() * 4 + 2,
+          alpha: 0.8,
+          lifetime: 0,
+          maxLifetime: 18
+        });
+      }
+
+      // Hit check against players
+      playersRef.current.forEach(p => {
+        if (p.hull > 0 && p.invulnerableTime <= 0) {
+          const dist = Math.hypot(p.x - lp.x, p.y - lp.y);
+          if (dist < p.radius + lp.radius) {
+            lp.lifetime = lp.maxLifetime; // destroy
+
+            // Apply damage
+            if (p.shield > 0) {
+              p.shield = Math.max(0, p.shield - lp.damage);
+              p.lastShieldHitTime = Date.now();
+              addGainNotification(`💥 ${p.name} - LÁVA ZASÁHLA ŠTÍT! (-${lp.damage} HP)`, '#fb923c');
+            } else {
+              p.hull = Math.max(0, p.hull - lp.damage);
+              p.lastHullHitTime = Date.now();
+              addGainNotification(`🚨 ${p.name} - LÁVA POŠKODILA TRUP! (-${lp.damage} HP)`, '#ef4444');
+              if (p.hull <= 0) {
+                triggerShipCatastrophicFailure();
+              }
+            }
+            playDamageSound();
+            triggerCameraShake(5);
+
+            // Lava splash explosion particles
+            for (let i = 0; i < 12; i++) {
+              const pAng = Math.random() * Math.PI * 2;
+              const pSpd = Math.random() * 4 + 1.5;
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: lp.x,
+                y: lp.y,
+                vx: Math.cos(pAng) * pSpd,
+                vy: Math.sin(pAng) * pSpd,
+                color: lp.color,
+                size: Math.random() * 5 + 1.5,
+                alpha: 0.9,
+                lifetime: 0,
+                maxLifetime: 25
+              });
+            }
+          }
+        }
+      });
+    });
+    lavaProjectilesRef.current = lavaProjectilesRef.current.filter(lp => lp.lifetime < lp.maxLifetime);
+
+    // 2. Sektor Gamma: Ledový prstenec (Blizzard zones and freezing)
+    if (selectedMapRef.current === 'ice') {
+      // Maintain exactly 2 blizzard zones in Sektor Gamma
+      if (blizzardZonesRef.current.length < 2) {
+        blizzardZonesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: (Math.random() - 0.5) * 2200,
+          y: (Math.random() - 0.5) * 2200,
+          vx: (Math.random() - 0.5) * 1.6,
+          vy: (Math.random() - 0.5) * 1.6,
+          radius: Math.random() * 120 + 220, // 220 to 340px radius
+          speed: Math.random() * 0.02 + 0.01,
+        });
+      }
+    }
+
+    // Update Blizzard Zones
+    blizzardZonesRef.current.forEach(bz => {
+      bz.x += bz.vx;
+      bz.y += bz.vy;
+
+      // Keep them within field boundary
+      if (Math.abs(bz.x) > 1900) bz.vx *= -1;
+      if (Math.abs(bz.y) > 1900) bz.vy *= -1;
+
+      // Swirling blizzard snow particles inside the circle
+      if (Math.random() < 0.45) {
+        const pAng = Math.random() * Math.PI * 2;
+        const pDist = Math.random() * bz.radius;
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: bz.x + Math.cos(pAng) * pDist,
+          y: bz.y + Math.sin(pAng) * pDist,
+          vx: bz.vx + Math.sin(pAng) * 0.8 + (Math.random() - 0.5) * 0.6,
+          vy: bz.vy - Math.cos(pAng) * 0.8 + (Math.random() - 0.5) * 0.6, // circular swirling motion
+          color: Math.random() < 0.3 ? '#bae6fd' : '#e0f2fe',
+          size: Math.random() * 2.5 + 1.0,
+          alpha: 0.45,
+          lifetime: 0,
+          maxLifetime: 60
+        });
+      }
+
+      // Apply frost accumulate to players inside
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const dist = Math.hypot(p.x - bz.x, p.y - bz.y);
+          if (dist < bz.radius) {
+            p.frostLevel = Math.min(100, (p.frostLevel || 0) + 0.30); // accumulate frost
+            
+            // tiny icicles sparks falling off
+            if (Math.random() < 0.12) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x + (Math.random() - 0.5) * 22,
+                y: p.y + (Math.random() - 0.5) * 22,
+                vx: p.vx * 0.3,
+                vy: p.vy * 0.3 + 0.4,
+                color: '#e0f2fe',
+                size: Math.random() * 2 + 1,
+                alpha: 0.7,
+                lifetime: 0,
+                maxLifetime: 15
+              });
+            }
+          }
+        }
+      });
+    });
+
+    // Frost decay and frozen timer ticking
+    playersRef.current.forEach(p => {
+      if (p.hull > 0) {
+        const inBlizzardZone = blizzardZonesRef.current.some(bz => Math.hypot(p.x - bz.x, p.y - bz.y) < bz.radius);
+        if (!inBlizzardZone) {
+          p.frostLevel = Math.max(0, (p.frostLevel || 0) - 0.15); // natural warming up outside
+        }
+        if (p.frozenTimer && p.frozenTimer > 0) {
+          p.frozenTimer--;
+        }
+      }
+    });
+
+    // 3. Sektor Delta: Zlaté jádro (EM Storms)
+    if (selectedMapRef.current === 'gold') {
+      if (emStormNextTriggerRef.current > 0) {
+        emStormNextTriggerRef.current--;
+      } else {
+        // Trigger EM storm!
+        emStormActiveRef.current = true;
+        emStormTimerRef.current = 300; // 5 seconds duration
+        emStormNextTriggerRef.current = 900 + Math.floor(Math.random() * 600); // 15-25 seconds cooldown
+        addGainNotification("⚠️ ELEKTROMAGNETICKÁ BOUŘE ZAPOČALA!", "#f59e0b");
+        addCombatLogMessage("🚨 Sektor Delta: EM bouře vyřadila magnet na rudu a ruší radarový signál!", "#f59e0b");
+        playExplosionSound('medium');
+      }
+
+      if (emStormActiveRef.current) {
+        if (emStormTimerRef.current > 0) {
+          emStormTimerRef.current--;
+
+          // Spark particles around random screen points
+          if (Math.random() < 0.2) {
+            const camX = lastCamXRef.current;
+            const camY = lastCamYRef.current;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: camX + (Math.random() * window.innerWidth - window.innerWidth / 2),
+              y: camY + (Math.random() * window.innerHeight - window.innerHeight / 2),
+              vx: (Math.random() - 0.5) * 4,
+              vy: (Math.random() - 0.5) * 4,
+              color: '#fbbf24', // golden yellow sparks
+              size: Math.random() * 2 + 1,
+              alpha: 0.8,
+              lifetime: 0,
+              maxLifetime: 12
+            });
+          }
+        } else {
+          emStormActiveRef.current = false;
+          addGainNotification("✅ ELEKTROMAGNETICKÉ RUŠENÍ SKONČILO", "#10b981");
+          addCombatLogMessage("⚡ Sektor Delta: Signál radaru a magnet obnoven.", "#10b981");
+        }
+      }
+    } else {
+      emStormActiveRef.current = false;
+    }
+
+    // 4. Boss Sector specific attacks updating
+    if (isBossFightActiveRef.current && bossRef.current) {
+      const boss = bossRef.current;
+
+      // 4a. Magmatický Sektor Boss Attacks (Guided Fireballs)
+      if (selectedMapRef.current === 'magma') {
+        // Boss fires a guided fireball every 3.5 seconds
+        if (Date.now() - (boss.lastSpecialAttack || 0) > 3500) {
+          boss.lastSpecialAttack = Date.now();
+          playLaserSound(3);
+          
+          bossGuidedFireballsRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(boss.angle) * 3.5,
+            vy: Math.sin(boss.angle) * 3.5,
+            radius: 15,
+            color: '#ef4444',
+            damage: 25,
+            lifetime: 0,
+            maxLifetime: 240, // 4 seconds duration
+          });
+          addGainNotification("🔥 BOSS VYSTŘELIL NAVÁDĚNOU OHŇOVOU KOULI!", "#ef4444");
+        }
+      }
+
+      // 4b. Ledový Sektor Boss Attacks (Freezing Pulse)
+      if (selectedMapRef.current === 'ice') {
+        // Boss releases freezing pulse every 4.5 seconds
+        if (Date.now() - (boss.lastSpecialAttack || 0) > 4500) {
+          boss.lastSpecialAttack = Date.now();
+          playExplosionSound('medium');
+
+          bossFreezingPulsesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: boss.x,
+            y: boss.y,
+            radius: 20,
+            maxRadius: 360,
+            speed: 5,
+            damage: 10,
+            hitPlayerIds: [],
+          });
+          addGainNotification("❄️ BOSS VYPUSTIL MRAZIVÝ PULS!", "#38bdf8");
+        }
+      }
+
+      // 4c. Zlatý Sektor Boss Attacks (Summon Escort Drones)
+      if (selectedMapRef.current === 'gold') {
+        // Check drone count and spawn up to 3 drones max
+        if (bossEscortDronesRef.current.length < 3 && Date.now() - (boss.lastSpecialAttack || 0) > 6000) {
+          boss.lastSpecialAttack = Date.now();
+          playExplosionSound('small');
+
+          const orbitOffset = bossEscortDronesRef.current.length * (Math.PI * 2 / 3);
+          bossEscortDronesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: boss.x + Math.cos(orbitOffset) * 120,
+            y: boss.y + Math.sin(orbitOffset) * 120,
+            angle: orbitOffset,
+            orbitOffset,
+            hp: 60, // robust hp drone shield
+            maxHp: 60,
+            radius: 16,
+          });
+          addGainNotification("🛡️ BOSS VYVOLAL DOPROVODNÉHO DRONA!", "#f59e0b");
+          addCombatLogMessage("👑 Boss: Přivolán doprovodný dron jako živý štít!", "#f59e0b");
+        }
+      }
+    }
+
+    // Update Boss Guided Fireballs
+    bossGuidedFireballsRef.current.forEach(bf => {
+      // Find closest player to track
+      let closestP: Player | null = null;
+      let closestD = 999999;
+      playersRef.current.forEach(p => {
+        if (p.hull > 0) {
+          const d = Math.hypot(p.x - bf.x, p.y - bf.y);
+          if (d < closestD) {
+            closestD = d;
+            closestP = p;
+          }
+        }
+      });
+
+      if (closestP) {
+        const dx = closestP.x - bf.x;
+        const dy = closestP.y - bf.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 5) {
+          const desiredVx = (dx / dist) * 4.2;
+          const desiredVy = (dy / dist) * 4.2;
+          // steer slowly
+          bf.vx += (desiredVx - bf.vx) * 0.05;
+          bf.vy += (desiredVy - bf.vy) * 0.05;
+        }
+      }
+
+      bf.x += bf.vx;
+      bf.y += bf.vy;
+      bf.lifetime++;
+
+      // Leave burning trail
+      if (bf.lifetime % 3 === 0) {
+        fireTrailsRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: bf.x,
+          y: bf.y,
+          radius: 18,
+          lifetime: 0,
+          maxLifetime: 140, // 2.3 seconds
+        });
+      }
+
+      // Fire trail flame particles
+      if (Math.random() < 0.4) {
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: bf.x + (Math.random() - 0.5) * bf.radius,
+          y: bf.y + (Math.random() - 0.5) * bf.radius,
+          vx: -bf.vx * 0.2 + (Math.random() - 0.5) * 0.5,
+          vy: -bf.vy * 0.2 + (Math.random() - 0.5) * 0.5,
+          color: '#f97316',
+          size: Math.random() * 5 + 3,
+          alpha: 0.9,
+          lifetime: 0,
+          maxLifetime: 15
+        });
+      }
+
+      // Collision checks with players
+      playersRef.current.forEach(p => {
+        if (p.hull > 0 && p.invulnerableTime <= 0) {
+          const dist = Math.hypot(p.x - bf.x, p.y - bf.y);
+          if (dist < p.radius + bf.radius) {
+            bf.lifetime = bf.maxLifetime; // destroy
+
+            p.hull = Math.max(0, p.hull - bf.damage); // bypasses shields! "poškozující trup"
+            p.lastHullHitTime = Date.now();
+            addGainNotification(`🚨 OHŇOVÁ KOULA PROBILA ŠTÍT A ZASÁHLA TRUP! (-${bf.damage} HP)`, '#ef4444');
+            addCombatLogMessage(`🚨 Ohňová koule zasáhla trup ${p.name} -${bf.damage}`, '#ef4444');
+            
+            playDamageSound();
+            triggerCameraShake(8);
+
+            if (p.hull <= 0) {
+              triggerShipCatastrophicFailure();
+            }
+          }
+        }
+      });
+    });
+    bossGuidedFireballsRef.current = bossGuidedFireballsRef.current.filter(bf => bf.lifetime < bf.maxLifetime);
+
+    // Update Fire Trails (Damaging lingering flames)
+    fireTrailsRef.current.forEach(ft => {
+      ft.lifetime++;
+
+      // Flame particles rising off
+      if (Math.random() < 0.15) {
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: ft.x + (Math.random() - 0.5) * ft.radius,
+          y: ft.y + (Math.random() - 0.5) * ft.radius,
+          vx: (Math.random() - 0.5) * 0.4,
+          vy: -Math.random() * 0.6 - 0.2, // rises slightly
+          color: '#fb923c',
+          size: Math.random() * 3 + 1,
+          alpha: 0.6,
+          lifetime: 0,
+          maxLifetime: 20
+        });
+      }
+
+      // Check damage to players
+      playersRef.current.forEach(p => {
+        if (p.hull > 0 && p.invulnerableTime <= 0) {
+          const dist = Math.hypot(p.x - ft.x, p.y - ft.y);
+          if (dist < p.radius + ft.radius) {
+            // Take direct hull damage over time!
+            if (Math.random() < 0.15) {
+              p.hull = Math.max(0, p.hull - 1.5);
+              p.lastHullHitTime = Date.now();
+              addGainNotification(`🔥 TRUP PÁLÍ LÁVOVÁ STOPA! (-1 HP)`, '#ef4444');
+              if (p.hull <= 0) {
+                triggerShipCatastrophicFailure();
+              }
+            }
+          }
+        }
+      });
+    });
+    fireTrailsRef.current = fireTrailsRef.current.filter(ft => ft.lifetime < ft.maxLifetime);
+
+    // Update Freezing Pulses (expanding blue rings)
+    bossFreezingPulsesRef.current.forEach(fp => {
+      fp.radius += fp.speed;
+
+      // blue sparks along ring perimeter
+      const step = Math.PI / 12;
+      for (let i = 0; i < Math.PI * 2; i += step) {
+        if (Math.random() < 0.15) {
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: fp.x + Math.cos(i) * fp.radius,
+            y: fp.y + Math.sin(i) * fp.radius,
+            vx: (Math.random() - 0.5) * 0.5,
+            vy: (Math.random() - 0.5) * 0.5,
+            color: '#38bdf8',
+            size: Math.random() * 2.5 + 1,
+            alpha: 0.6,
+            lifetime: 0,
+            maxLifetime: 12
+          });
+        }
+      }
+
+      // Check hit players on edge expand
+      playersRef.current.forEach(p => {
+        if (p.hull > 0 && !fp.hitPlayerIds.includes(p.id)) {
+          const dist = Math.hypot(p.x - fp.x, p.y - fp.y);
+          if (Math.abs(dist - fp.radius) < 22) {
+            fp.hitPlayerIds.push(p.id);
+
+            // Hit player! Freeze engines for 1 second (60 frames)
+            p.frozenTimer = 60;
+            p.frostLevel = 100; // instant frozen coating
+
+            if (p.shield > 0) {
+              p.shield = Math.max(0, p.shield - fp.damage);
+              p.lastShieldHitTime = Date.now();
+              addGainNotification(`❄️ ${p.name} - MRAZIVÝ PULS ZMRZIL MOTORY! (-${fp.damage} HP)`, '#38bdf8');
+            } else {
+              p.hull = Math.max(0, p.hull - fp.damage);
+              p.lastHullHitTime = Date.now();
+              addGainNotification(`🚨 ${p.name} - MRAZIVÝ PULS ZMRZIL TRUP! (-${fp.damage} HP)`, '#0284c7');
+              if (p.hull <= 0) {
+                triggerShipCatastrophicFailure();
+              }
+            }
+            playDamageSound();
+            triggerCameraShake(4);
+          }
+        }
+      });
+    });
+    bossFreezingPulsesRef.current = bossFreezingPulsesRef.current.filter(fp => fp.radius < fp.maxRadius);
+
+    // Update Boss Escort Drones (orbiting boss shields)
+    bossEscortDronesRef.current.forEach(drone => {
+      if (bossRef.current) {
+        const boss = bossRef.current;
+        // Circling around the boss body
+        const orbitAngle = Date.now() / 900 + drone.orbitOffset;
+        const targetX = boss.x + Math.cos(orbitAngle) * 125;
+        const targetY = boss.y + Math.sin(orbitAngle) * 125;
+        
+        drone.x += (targetX - drone.x) * 0.1;
+        drone.y += (targetY - drone.y) * 0.1;
+        drone.angle = orbitAngle;
+
+        // Sparkle visuals
+        if (Math.random() < 0.25) {
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: drone.x,
+            y: drone.y,
+            vx: (Math.random() - 0.5) * 1.5,
+            vy: (Math.random() - 0.5) * 1.5,
+            color: '#fbbf24',
+            size: Math.random() * 3 + 1,
+            alpha: 0.8,
+            lifetime: 0,
+            maxLifetime: 15
+          });
+        }
+      } else {
+        drone.hp = 0; // destroy if boss is dead
+      }
+
+      // Check intercepting player lasers!
+      lasersRef.current.forEach(l => {
+        if (l.lifetime < l.maxLifetime) {
+          const ldist = Math.hypot(l.x - drone.x, l.y - drone.y);
+          if (ldist < l.radius + drone.radius) {
+            l.lifetime = l.maxLifetime; // absorb laser!
+            drone.hp -= l.damage; // take damage
+            
+            // splash sparks
+            for (let i = 0; i < 5; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: l.x,
+                y: l.y,
+                vx: (Math.random() - 0.5) * 3,
+                vy: (Math.random() - 0.5) * 3,
+                color: '#fbbf24',
+                size: Math.random() * 4 + 1.5,
+                alpha: 0.9,
+                lifetime: 0,
+                maxLifetime: 15
+              });
+            }
+            playDamageSound();
+          }
+        }
+      });
+    });
+    // Check blowup of escort drones
+    bossEscortDronesRef.current.forEach(drone => {
+      if (drone.hp <= 0) {
+        playExplosionSound('medium');
+        // Spawn some crystals as a reward!
+        const ore = createOreEntity(drone.x, drone.y, 'crystal');
+        oresRef.current.push(ore);
+        
+        // heavy golden explode particles
+        for (let i = 0; i < 18; i++) {
+          const pAng = Math.random() * Math.PI * 2;
+          const pSpd = Math.random() * 5 + 2;
+          particlesRef.current.push({
+            id: Math.random().toString(36).substring(2, 9),
+            x: drone.x,
+            y: drone.y,
+            vx: Math.cos(pAng) * pSpd,
+            vy: Math.sin(pAng) * pSpd,
+            color: '#fbbf24',
+            size: Math.random() * 5 + 2,
+            alpha: 1.0,
+            lifetime: 0,
+            maxLifetime: 30
+          });
+        }
+        addGainNotification("+1 Krystal od dronu", "#fbbf24");
+      }
+    });
+    bossEscortDronesRef.current = bossEscortDronesRef.current.filter(drone => drone.hp > 0);
+
+    // Update player toxic exhaust trail bubbles damage to pirates and boss
+    playerTrailBubblesRef.current.forEach(tb => {
+      tb.lifetime++;
+
+      // toxic particles fading
+      if (Math.random() < 0.15) {
+        particlesRef.current.push({
+          id: Math.random().toString(36).substring(2, 9),
+          x: tb.x + (Math.random() - 0.5) * tb.radius,
+          y: tb.y + (Math.random() - 0.5) * tb.radius,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: (Math.random() - 0.5) * 0.3,
+          color: tb.color,
+          size: Math.random() * 3.5 + 1.5,
+          alpha: 0.5,
+          lifetime: 0,
+          maxLifetime: 18
+        });
+      }
+
+      // Deal damage to standard pirates overlapping
+      piratesRef.current.forEach(pirate => {
+        const dist = Math.hypot(pirate.x - tb.x, pirate.y - tb.y);
+        if (dist < pirate.radius + tb.radius) {
+          pirate.hp -= tb.damage; // burn pirate health!
+          // spawn small fiery hits
+          if (Math.random() < 0.1) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: pirate.x,
+              y: pirate.y,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2,
+              color: '#ea580c',
+              size: 2,
+              alpha: 0.9,
+              lifetime: 0,
+              maxLifetime: 10
+            });
+          }
+        }
+      });
+
+      // Deal damage to boss overlapping
+      if (isBossFightActiveRef.current && bossRef.current) {
+        const boss = bossRef.current;
+        const dist = Math.hypot(boss.x - tb.x, boss.y - tb.y);
+        if (dist < boss.radius + tb.radius) {
+          // Boss has high armor, take slightly reduced damage
+          boss.hp -= tb.damage * 0.45;
+        }
+      }
+    });
+    playerTrailBubblesRef.current = playerTrailBubblesRef.current.filter(tb => tb.lifetime < tb.maxLifetime);
 
     // Settle React state stats regularly so scoreboards and other layers update correctly
     const kbP1Val = playersRef.current.find(pl => pl.inputSource === 'keyboard_p1');
@@ -3142,6 +3878,13 @@ export default function App() {
     else if (upgradesRef.current.magnetLevel === 5) { magnetRadius = 1200; magnetPullStrength = 0.85; }
     else if (upgradesRef.current.magnetLevel >= 6) { magnetRadius = 8000; magnetPullStrength = 1.95; }
 
+    // Salvage Magnet (Sběrač trosek) combo synergy
+    if (upgradesRef.current.salvageMagnetLevel > 0) {
+      const comboMult = comboMultiplierRef.current || 1;
+      magnetRadius += upgradesRef.current.salvageMagnetLevel * comboMult * 18;
+      magnetPullStrength += upgradesRef.current.salvageMagnetLevel * comboMult * 0.04;
+    }
+
     // Apply prestige bonus multiplier
     const prestigeBonusMultiplier = 1 + (statsRef.current.prestigeCount || 0) * 0.15;
     magnetRadius *= prestigeBonusMultiplier;
@@ -3152,6 +3895,12 @@ export default function App() {
       const lvl = upgradesRef.current.abilitySuperMagnetLevel;
       magnetRadius = 99999;
       magnetPullStrength = lvl === 3 ? 12.0 : lvl === 2 ? 6.0 : 3.5;
+    }
+
+    // EM Storm temporarily disables the magnet
+    if (emStormActiveRef.current) {
+      magnetRadius = 0;
+      magnetPullStrength = 0;
     }
 
     oresRef.current = oresRef.current.map(ore => {
@@ -5842,6 +6591,35 @@ export default function App() {
           ctx.restore();
         }
 
+        // Draw ice frost coating overlay ("loď pokrývají námrazou")
+        if (p.frostLevel && p.frostLevel > 0) {
+          ctx.save();
+          ctx.rotate(-p.angle);
+          
+          ctx.fillStyle = `rgba(56, 189, 248, ${(p.frostLevel / 100) * 0.45})`; // ice blue tint
+          ctx.strokeStyle = `rgba(224, 242, 254, ${(p.frostLevel / 100) * 0.75})`; // frost highlights
+          ctx.lineWidth = 1.5 + (p.frostLevel / 100) * 1.5;
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = (p.frostLevel / 100) * 12;
+
+          ctx.beginPath();
+          ctx.arc(0, 0, p.radius + 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Tiny snowflake/frost crack markings inside the ice bubble if high frost
+          if (p.frostLevel > 35) {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(-6, -6); ctx.lineTo(6, 6);
+            ctx.moveTo(6, -6); ctx.lineTo(-6, 6);
+            ctx.moveTo(0, -8); ctx.lineTo(0, 8);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
         ctx.save();
         ctx.rotate(-p.angle);
         
@@ -5971,6 +6749,177 @@ export default function App() {
           }
         });
       }
+
+      // --- DRAW BLIZZARD SNOW STORMS OVERLAYS ---
+      blizzardZonesRef.current.forEach(bz => {
+        const sx = bz.x - camX;
+        const sy = bz.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+        
+        // Translucent frosted ice wind circle
+        const radPulse = bz.radius + Math.sin(Date.now() / 200 + bz.x) * 12;
+        const grad = ctx.createRadialGradient(0, 0, radPulse * 0.2, 0, 0, radPulse);
+        grad.addColorStop(0, 'rgba(186, 230, 253, 0.22)');
+        grad.addColorStop(0.6, 'rgba(56, 189, 248, 0.12)');
+        grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, radPulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw spinning blizzard lines
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1.8;
+        ctx.save();
+        ctx.rotate(Date.now() * 0.0008 + bz.x);
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.arc(0, 0, radPulse * (0.35 + i * 0.2), 0.2, Math.PI * 0.6);
+          ctx.stroke();
+        }
+        ctx.restore();
+        
+        ctx.fillStyle = 'rgba(224, 242, 254, 0.8)';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('❄️ BLIZZARD', 0, -radPulse - 8);
+        ctx.restore();
+      });
+
+      // --- DRAW TOXIC TRAIL BUBBLES ---
+      playerTrailBubblesRef.current.forEach(tb => {
+        const sx = tb.x - camX;
+        const sy = tb.y - camY;
+        ctx.save();
+        ctx.globalAlpha = tb.alpha;
+        ctx.fillStyle = tb.color;
+        ctx.shadowBlur = tb.radius * 2;
+        ctx.shadowColor = tb.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, tb.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- DRAW LAVA PROJECTILES ---
+      lavaProjectilesRef.current.forEach(lp => {
+        const sx = lp.x - camX;
+        const sy = lp.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(lp.angle);
+
+        // Core fiery heat glow
+        ctx.shadowBlur = lp.radius * 3.5;
+        ctx.shadowColor = lp.color;
+        ctx.fillStyle = lp.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, lp.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Yellow fiery center core
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(0, 0, lp.radius * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- DRAW FIRE TRAILS LEFT BY GUIDED FIREBALLS ---
+      fireTrailsRef.current.forEach(ft => {
+        const sx = ft.x - camX;
+        const sy = ft.y - camY;
+        ctx.save();
+        ctx.globalAlpha = ft.alpha;
+        ctx.fillStyle = ft.color;
+        ctx.shadowBlur = ft.radius * 3;
+        ctx.shadowColor = ft.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, ft.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- DRAW BOSS GUIDED FIREBALLS ---
+      bossGuidedFireballsRef.current.forEach(gf => {
+        const sx = gf.x - camX;
+        const sy = gf.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(gf.angle);
+
+        ctx.shadowBlur = gf.radius * 4;
+        ctx.shadowColor = gf.color;
+        ctx.fillStyle = gf.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, gf.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // White hot center
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, gf.radius * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // --- DRAW BOSS FREEZING PULSES ---
+      bossFreezingPulsesRef.current.forEach(fp => {
+        const sx = fp.x - camX;
+        const sy = fp.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        // Pulsating icy rings expanding
+        ctx.strokeStyle = fp.color;
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = fp.color;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, fp.radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, fp.radius - 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      // --- DRAW BOSS ESCORT DRONES ---
+      bossEscortDronesRef.current.forEach(ed => {
+        const sx = ed.x - camX;
+        const sy = ed.y - camY;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ed.angle);
+
+        ctx.shadowBlur = ed.radius * 2.5;
+        ctx.shadowColor = ed.color;
+        
+        // Steel shielding outer body
+        ctx.fillStyle = '#475569';
+        ctx.strokeStyle = ed.color;
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.arc(0, 0, ed.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Golden power core eye
+        ctx.fillStyle = '#eab308';
+        ctx.beginPath();
+        ctx.arc(ed.radius * 0.4, 0, ed.radius * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Tiny red defense laser barrels on sides
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-2, -ed.radius - 3, 4, 3);
+        ctx.fillRect(-2, ed.radius, 4, 3);
+        ctx.restore();
+      });
 
       ctx.restore(); // Restore context origin shift
       ctx.restore(); // Restore master clip
@@ -6157,100 +7106,141 @@ export default function App() {
         const radarRange = 2500;
         const scale = 75 / radarRange;
 
-        // Draw Asteroids on Radar
-        asteroidsRef.current.forEach(ast => {
-          const dx = ast.x - centerPlayer.x;
-          const dy = ast.y - centerPlayer.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < radarRange) {
-            const ax = cx + dx * scale;
-            const ay = cy + dy * scale;
+        if (emStormActiveRef.current) {
+          // Draw fuzzy static noise over radar area
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(cx, cy, 74, 0, Math.PI * 2);
+          ctx.clip();
+          
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.25)';
+          ctx.lineWidth = 1.0;
+          for (let i = 0; i < 15; i++) {
+            const ry = cy - 75 + Math.random() * 150;
             ctx.beginPath();
-            ctx.arc(ax, ay, Math.max(1.5, ast.radius * 0.08), 0, Math.PI * 2);
-            if (ast.asteroidType === 'magma') {
-              ctx.fillStyle = '#f97316'; // orange magma
-            } else if (ast.asteroidType === 'ice') {
-              ctx.fillStyle = '#38bdf8'; // blue ice
-            } else if (ast.asteroidType === 'gold' || ast.asteroidType === 'legendary') {
-              ctx.fillStyle = '#eab308'; // gold
-            } else {
-              ctx.fillStyle = '#94a3b8'; // grey default
+            ctx.moveTo(cx - 75, ry);
+            ctx.lineTo(cx + 75, ry + (Math.random() - 0.5) * 16);
+            ctx.stroke();
+          }
+
+          // Random white/grey static noise pixels
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+          for (let i = 0; i < 45; i++) {
+            const rx = cx - 75 + Math.random() * 150;
+            const ry = cy - 75 + Math.random() * 150;
+            ctx.fillRect(rx, ry, 1.8, 1.8);
+          }
+          ctx.restore();
+
+          // Error warning message
+          const isBlinking = Math.floor(Date.now() / 250) % 2 === 0;
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = isBlinking ? '#f43f5e' : '#78716c';
+          ctx.textAlign = 'center';
+          ctx.fillText('⚡ SIGNAL ERROR ⚡', cx, cy + 3);
+
+          // Outer red blinking hazard frame
+          ctx.strokeStyle = isBlinking ? '#f43f5e' : '#991b1b';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 75, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // Draw Asteroids on Radar
+          asteroidsRef.current.forEach(ast => {
+            const dx = ast.x - centerPlayer.x;
+            const dy = ast.y - centerPlayer.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < radarRange) {
+              const ax = cx + dx * scale;
+              const ay = cy + dy * scale;
+              ctx.beginPath();
+              ctx.arc(ax, ay, Math.max(1.5, ast.radius * 0.08), 0, Math.PI * 2);
+              if (ast.asteroidType === 'magma') {
+                ctx.fillStyle = '#f97316'; // orange magma
+              } else if (ast.asteroidType === 'ice') {
+                ctx.fillStyle = '#38bdf8'; // blue ice
+              } else if (ast.asteroidType === 'gold' || ast.asteroidType === 'legendary') {
+                ctx.fillStyle = '#eab308'; // gold
+              } else {
+                ctx.fillStyle = '#94a3b8'; // grey default
+              }
+              ctx.fill();
             }
-            ctx.fill();
-          }
-        });
+          });
 
-        // Draw Pirates on Radar
-        piratesRef.current.forEach(pirate => {
-          const dx = pirate.x - centerPlayer.x;
-          const dy = pirate.y - centerPlayer.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < radarRange) {
-            const px = cx + dx * scale;
-            const py = cy + dy * scale;
-            
-            // Pulsating red dot for threats
-            const pulse = 1.0 + Math.sin(Date.now() / 150) * 0.3;
-            ctx.beginPath();
-            ctx.arc(px, py, 3.5 * pulse, 0, Math.PI * 2);
-            ctx.fillStyle = '#ef4444';
-            ctx.fill();
-            
-            ctx.strokeStyle = '#f43f5e';
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-          }
-        });
-
-        // Draw Boss on Radar (large threat!)
-        if (isBossFightActiveRef.current && bossRef.current) {
-          const boss = bossRef.current;
-          const dx = boss.x - centerPlayer.x;
-          const dy = boss.y - centerPlayer.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < radarRange) {
-            const bx = cx + dx * scale;
-            const by = cy + dy * scale;
-            
-            // Flashing heavy red ring
-            const flash = Date.now() % 400 < 200;
-            ctx.beginPath();
-            ctx.arc(bx, by, 7.0, 0, Math.PI * 2);
-            ctx.fillStyle = flash ? 'rgba(239, 68, 68, 0.8)' : 'rgba(244, 63, 94, 0.3)';
-            ctx.fill();
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // Core dot
-            ctx.beginPath();
-            ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-          }
-        }
-
-        // Draw Player and co-pilots
-        playersRef.current.forEach(p => {
-          if (p.hull > 0) {
-            const dx = p.x - centerPlayer.x;
-            const dy = p.y - centerPlayer.y;
+          // Draw Pirates on Radar
+          piratesRef.current.forEach(pirate => {
+            const dx = pirate.x - centerPlayer.x;
+            const dy = pirate.y - centerPlayer.y;
             const dist = Math.hypot(dx, dy);
             if (dist < radarRange) {
               const px = cx + dx * scale;
               const py = cy + dy * scale;
               
+              // Pulsating red dot for threats
+              const pulse = 1.0 + Math.sin(Date.now() / 150) * 0.3;
               ctx.beginPath();
-              ctx.arc(px, py, 3, 0, Math.PI * 2);
-              ctx.fillStyle = p.color;
+              ctx.arc(px, py, 3.5 * pulse, 0, Math.PI * 2);
+              ctx.fillStyle = '#ef4444';
               ctx.fill();
               
-              ctx.strokeStyle = '#ffffff';
-              ctx.lineWidth = 0.8;
+              ctx.strokeStyle = '#f43f5e';
+              ctx.lineWidth = 1.0;
               ctx.stroke();
             }
+          });
+
+          // Draw Boss on Radar (large threat!)
+          if (isBossFightActiveRef.current && bossRef.current) {
+            const boss = bossRef.current;
+            const dx = boss.x - centerPlayer.x;
+            const dy = boss.y - centerPlayer.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < radarRange) {
+              const bx = cx + dx * scale;
+              const by = cy + dy * scale;
+              
+              // Flashing heavy red ring
+              const flash = Date.now() % 400 < 200;
+              ctx.beginPath();
+              ctx.arc(bx, by, 7.0, 0, Math.PI * 2);
+              ctx.fillStyle = flash ? 'rgba(239, 68, 68, 0.8)' : 'rgba(244, 63, 94, 0.3)';
+              ctx.fill();
+              ctx.strokeStyle = '#ef4444';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+
+              // Core dot
+              ctx.beginPath();
+              ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+              ctx.fillStyle = '#ffffff';
+              ctx.fill();
+            }
           }
-        });
+
+          // Draw Player and co-pilots
+          playersRef.current.forEach(p => {
+            if (p.hull > 0) {
+              const dx = p.x - centerPlayer.x;
+              const dy = p.y - centerPlayer.y;
+              const dist = Math.hypot(dx, dy);
+              if (dist < radarRange) {
+                const px = cx + dx * scale;
+                const py = cy + dy * scale;
+                
+                ctx.beginPath();
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.fill();
+                
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+              }
+            }
+          });
+        }
 
         // Map label overlay
         ctx.font = 'bold 8px monospace';
@@ -6983,7 +7973,7 @@ export default function App() {
                       <span className="font-bold tracking-tight text-orange-300">SEKTOR BETA: MAGMATICKÉ PEKLO</span>
                     </div>
                     <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Zvýšený výskyt magmatických skál s drahým obsidiánem. (1.25x skóre)
+                      Zvýšený výskyt magmatických skál s drahým obsidiánem. <span className="text-orange-400 font-bold">Anomálie: Solární erupce (lávové střely).</span> (1.25x skóre)
                     </div>
                   </button>
 
@@ -7004,7 +7994,7 @@ export default function App() {
                       <span className="font-bold tracking-tight text-sky-300">SEKTOR GAMMA: LEDOVÝ PRSTENEC</span>
                     </div>
                     <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Těžařská zóna s masivním podílem ledových jader a diamantů. (1.25x skóre)
+                      Těžařská zóna s masivním podílem ledových jader a diamantů. <span className="text-sky-400 font-bold">Anomálie: Blizzardy (námraza lodě zpomaluje, roztaje střelbou!).</span> (1.25x skóre)
                     </div>
                   </button>
 
@@ -7025,7 +8015,7 @@ export default function App() {
                       <span className="font-bold tracking-tight text-amber-300 font-black">SEKTOR DELTA: ZLATÉ JÁDRO</span>
                     </div>
                     <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Masivní naleziště ryzího zlata. Agresivní korzářská ochrana! (1.5x skóre)
+                      Masivní naleziště ryzího zlata. Agresivní ochrana. <span className="text-amber-400 font-bold">Anomálie: Elektromagnetické bouře (výpadek radaru a magnetu).</span> (1.5x skóre)
                     </div>
                   </button>
                 </div>

@@ -475,6 +475,51 @@ export default function UpgradeShop({
           costs: { crystals: 500, diamonds: 150, obsidian: 45 },
         }
       ]
+    },
+    {
+      id: 'quantumMirrorLevel',
+      name: 'Kvantové zrcadlo',
+      description: 'Pasivní modul štítu, který má 15% šanci odrazit nepřátelský laser zpět na pirátskou loď.',
+      icon: <Shield className="w-5 h-5 text-indigo-400" id="icon-quantum-mirror" />,
+      maxLevel: 1,
+      levels: [
+        {
+          level: 1,
+          title: 'Projektor fázového odrazu',
+          description: 'Instaluje reflexní krystalovou mřížku na energetický štít (15% šance na odraz střely).',
+          costs: { crystals: 0, diamonds: 45, obsidian: 12 },
+        }
+      ]
+    },
+    {
+      id: 'toxicTrailLevel',
+      name: 'Reaktivní stopa',
+      description: 'Tvá částicová stopa za motorem začne pálit a způsobovat poškození pirátům, kteří tě pronásledují těsně v závěsu.',
+      icon: <Zap className="w-5 h-5 text-orange-400" id="icon-toxic-trail" />,
+      maxLevel: 1,
+      levels: [
+        {
+          level: 1,
+          title: 'Tepelné výfukové plyny',
+          description: 'Upraví trysky tak, aby za lodí zanechávaly žhavý plazmový ocas spalující pronásledující piráty.',
+          costs: { crystals: 0, diamonds: 35, obsidian: 8 },
+        }
+      ]
+    },
+    {
+      id: 'salvageMagnetLevel',
+      name: 'Sběrač trosek',
+      description: 'Čím vyšší máš kombo násobič, tím větší je dosah tvého magnetu pro přitahování vypadnuté rudy.',
+      icon: <Sparkles className="w-5 h-5 text-yellow-400" id="icon-salvage-magnet" />,
+      maxLevel: 1,
+      levels: [
+        {
+          level: 1,
+          title: 'Surovinová synergie',
+          description: 'Zesiluje gravitační magnet s každým násobkem komba (+40 metrů dosahu za každý stupeň komba).',
+          costs: { crystals: 0, diamonds: 30, obsidian: 6 },
+        }
+      ]
     }
   ];
 
@@ -506,6 +551,15 @@ export default function UpgradeShop({
     omegaDestructorLevel: [
       { id: 'laserLevel', minLevel: 4, name: 'Laserové dělo IV' },
       { id: 'abilitySockLevel', minLevel: 1, name: 'Smradlavá ponožka I' }
+    ],
+    quantumMirrorLevel: [
+      { id: 'shieldLevel', minLevel: 2, name: 'Energetický štít II' }
+    ],
+    toxicTrailLevel: [
+      { id: 'engineLevel', minLevel: 2, name: 'Pohonné trysky II' }
+    ],
+    salvageMagnetLevel: [
+      { id: 'magnetLevel', minLevel: 2, name: 'Gravitační magnet II' }
     ]
   };
 
@@ -515,19 +569,19 @@ export default function UpgradeShop({
       category: 'Zbraně & Ofenzíva',
       desc: 'Zbraňové moduly a palebné síly',
       colorClass: 'border-red-900/40 bg-red-950/5 text-red-400',
-      nodes: ['laserLevel', 'abilityLightningLevel', 'abilitySockLevel', 'omegaDestructorLevel'] as (keyof Upgrades)[]
+      nodes: ['laserLevel', 'abilityLightningLevel', 'abilitySockLevel', 'toxicTrailLevel', 'omegaDestructorLevel'] as (keyof Upgrades)[]
     },
     {
       category: 'Konstrukce & Štíty',
       desc: 'Pasivní obrana a pohlcování rázů',
       colorClass: 'border-blue-900/40 bg-blue-950/5 text-blue-400',
-      nodes: ['hullLevel', 'shieldLevel', 'abilityPulseLevel'] as (keyof Upgrades)[]
+      nodes: ['hullLevel', 'shieldLevel', 'quantumMirrorLevel', 'abilityPulseLevel'] as (keyof Upgrades)[]
     },
     {
       category: 'Podpora & Těžba',
       desc: 'Mobilita, dosah magnetů a droni',
       colorClass: 'border-emerald-900/40 bg-emerald-950/5 text-emerald-400',
-      nodes: ['engineLevel', 'miningDronesLevel', 'magnetLevel', 'abilitySuperMagnetLevel', 'scoreMultiplierLevel'] as (keyof Upgrades)[]
+      nodes: ['engineLevel', 'miningDronesLevel', 'magnetLevel', 'salvageMagnetLevel', 'abilitySuperMagnetLevel', 'scoreMultiplierLevel'] as (keyof Upgrades)[]
     },
     {
       category: 'Dimenze & Kosmos',
