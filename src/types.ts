@@ -132,6 +132,8 @@ export interface Player {
   inputSource: 'keyboard_p1' | 'keyboard_p2' | 'gamepad';
   gamepadIndex: number | null;
   // Dynamic Brainstorm Mechanics
+  lastShieldHitTime?: number;
+  lastHullHitTime?: number;
   anchoredAsteroidId?: string;
   anchorAngle?: number;
   anchorRadius?: number;

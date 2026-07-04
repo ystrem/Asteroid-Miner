@@ -2228,6 +2228,38 @@ export default function App() {
             maxLifetime: 35 + Math.floor(Math.random() * 25),
           });
         }
+
+        // If the ship is in critical state, emit warning smoke/sparks
+        if (p.hull / p.maxHull <= 0.35) {
+          if (Math.random() < 0.25) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: p.x + (Math.random() - 0.5) * 14,
+              y: p.y + (Math.random() - 0.5) * 14,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2,
+              color: Math.random() < 0.5 ? '#ef4444' : '#f97316',
+              size: Math.random() * 2.5 + 1.5,
+              alpha: 1.0,
+              lifetime: 0,
+              maxLifetime: 20 + Math.floor(Math.random() * 20),
+            });
+          }
+          if (Math.random() < 0.15) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: p.x + (Math.random() - 0.5) * 10,
+              y: p.y + (Math.random() - 0.5) * 10,
+              vx: (Math.random() - 0.5) * 0.8,
+              vy: (Math.random() - 0.5) * 0.8,
+              color: '#475569', // Slate smoke color
+              size: Math.random() * 5 + 3,
+              alpha: 0.7,
+              lifetime: 0,
+              maxLifetime: 40 + Math.floor(Math.random() * 30),
+            });
+          }
+        }
       } else {
         // Slow down wreckage slow-drift
         p.vx *= 0.96;
@@ -2489,11 +2521,13 @@ export default function App() {
 
                 if (p.shield > 0) {
                   p.shield = Math.max(0, p.shield - stormDmgShield);
+                  p.lastShieldHitTime = Date.now();
                   addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA ŠTÍT! (-${stormDmgShield} HP)`, '#fb923c');
                   addCombatLogMessage(`⚠️ ${p.name}: Radiace poškodila štít -${stormDmgShield}`, '#fb923c');
                   playDamageSound();
                 } else {
                   p.hull = Math.max(0, p.hull - stormDmgHull);
+                  p.lastHullHitTime = Date.now();
                   addGainNotification(`⚠️ ${p.name} - RADIACE POŠKODILA TRUP! (-${stormDmgHull} HP)`, '#ef4444');
                   addCombatLogMessage(`🚨 ${p.name}: Radiace poškodila trup -${stormDmgHull}`, '#ef4444');
                   playDamageSound();
@@ -2984,10 +3018,12 @@ export default function App() {
 
             if (p.shield > 0) {
               p.shield = Math.max(0, p.shield - pirateDmgShield);
+              p.lastShieldHitTime = Date.now();
               addGainNotification(`💥 ${p.name} - ABSORBOVÁN ZÁSAH ŠTÍTEM! (-${pirateDmgShield} HP)`, '#fb923c');
               addCombatLogMessage(`💥 ${p.name}: Korzár laser zasáhl štít -${pirateDmgShield}`, '#38bdf8');
             } else {
               p.hull = Math.max(0, p.hull - pirateDmgHull);
+              p.lastHullHitTime = Date.now();
               addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN KORZÁREM! (-${pirateDmgHull} HP)`, '#ef4444');
               addCombatLogMessage(`🚨 ${p.name}: Korzár laser zasáhl trup -${pirateDmgHull}`, '#ef4444');
               if (p.hull <= 0) {
@@ -3847,6 +3883,7 @@ export default function App() {
             let finalDmgToHull = calculatedDmg;
 
             if (p.shield > 0) {
+              p.lastShieldHitTime = Date.now();
               if (p.shield >= calculatedDmg) {
                 p.shield -= calculatedDmg;
                 finalDmgToHull = 0;
@@ -3863,6 +3900,7 @@ export default function App() {
 
             if (finalDmgToHull > 0) {
               p.hull = Math.max(0, p.hull - finalDmgToHull);
+              p.lastHullHitTime = Date.now();
               addGainNotification(`${p.name}: POŠKOZENO -${finalDmgToHull} HP`, '#f97316');
               addCombatLogMessage(`💥 ${p.name}: Kinetická kolize s asteroidem -${finalDmgToHull} HP`, '#f97316');
 
@@ -5704,9 +5742,13 @@ export default function App() {
           ctx.fill();
         }
 
-        ctx.fillStyle = playerNum === 1 ? '#1e293b' : '#1e1b4b';
-        ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
-        ctx.lineWidth = 2.5;
+        const timeSinceHullHit = Date.now() - (p.lastHullHitTime || 0);
+        const hullFlashActive = timeSinceHullHit < 500;
+        const hullFlashColor = Math.floor(timeSinceHullHit / 80) % 2 === 0 ? '#ef4444' : '#ffffff';
+
+        ctx.fillStyle = hullFlashActive ? hullFlashColor : (playerNum === 1 ? '#1e293b' : '#1e1b4b');
+        ctx.strokeStyle = hullFlashActive ? '#ef4444' : (playerNum === 1 ? '#38bdf8' : '#c084fc');
+        ctx.lineWidth = hullFlashActive ? 4.0 : 2.5;
         ctx.lineJoin = 'miter';
 
         ctx.beginPath();
@@ -5765,20 +5807,57 @@ export default function App() {
         if (upgradesRef.current.shieldLevel > 0 && currentShield > 0) {
           ctx.save();
           ctx.rotate(-p.angle);
-          ctx.strokeStyle = playerNum === 1 
-            ? `rgba(56, 189, 248, ${0.15 + (currentShield / maxShieldVal) * 0.4})`
-            : `rgba(168, 85, 247, ${0.15 + (currentShield / maxShieldVal) * 0.4})`;
-          ctx.shadowColor = playerNum === 1 ? '#38bdf8' : '#a855f7';
-          ctx.shadowBlur = 10;
-          ctx.lineWidth = 1.8;
-          ctx.beginPath();
-          ctx.arc(0, 0, p.radius + 8, 0, Math.PI * 2);
-          ctx.stroke();
+          
+          const timeSinceShieldHit = Date.now() - (p.lastShieldHitTime || 0);
+          const shieldFlashActive = timeSinceShieldHit < 500;
+          
+          if (shieldFlashActive) {
+            const shieldFlashColor = Math.floor(timeSinceShieldHit / 80) % 2 === 0 ? '#facc15' : '#ef4444';
+            ctx.strokeStyle = shieldFlashColor;
+            ctx.shadowColor = shieldFlashColor;
+            ctx.shadowBlur = 20;
+            ctx.lineWidth = 3.8;
+            
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius + 11, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Concentric shockwave ring
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius + 15 + (timeSinceShieldHit / 500) * 12, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.strokeStyle = playerNum === 1 
+              ? `rgba(56, 189, 248, ${0.15 + (currentShield / maxShieldVal) * 0.4})`
+              : `rgba(168, 85, 247, ${0.15 + (currentShield / maxShieldVal) * 0.4})`;
+            ctx.shadowColor = playerNum === 1 ? '#38bdf8' : '#a855f7';
+            ctx.shadowBlur = 10;
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius + 8, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           ctx.restore();
         }
 
         ctx.save();
         ctx.rotate(-p.angle);
+        
+        // Critical HP warning indicator above name
+        if (p.hull / p.maxHull <= 0.35) {
+          const isBlinking = Math.floor(Date.now() / 200) % 2 === 0;
+          if (isBlinking) {
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 6;
+            ctx.fillText("⚠️ NOUZE!", 0, -p.radius - 23);
+          }
+        }
+
         ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
         ctx.font = '9px monospace';
         ctx.textAlign = 'center';
