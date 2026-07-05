@@ -84,6 +84,8 @@ export interface Star {
 
 export type CarrierClass = 'none' | 'cargo' | 'mining' | 'war' | 'dreadnought' | 'stargate';
 
+export type PlayerShipClass = 'standard' | 'interceptor' | 'cruiser' | 'dreadnought';
+
 export type CapitalShipType = 'mining' | 'war' | 'mothership' | 'explorer';
 
 export interface CapitalShipStation {
@@ -157,6 +159,7 @@ export interface Upgrades {
   quantumMirrorLevel: number;      // 0 to 1 (Quantum Mirror upgrade)
   toxicTrailLevel: number;         // 0 to 1 (Toxic/Reactive Trail exhaust upgrade)
   salvageMagnetLevel: number;      // 0 to 1 (Salvage Magnet / Combo scaling upgrade)
+  playerShipClass: PlayerShipClass;
   
   // Carrier Upgrades
   carrierClass: CarrierClass;
@@ -169,6 +172,8 @@ export interface Upgrades {
   carrierHyperdriveRangeLevel: number; // 1 to 3
   carrierRepairBayLevel: number;    // 0 to 3
   carrierCargoHoldLevel: number;    // 0 to 3
+  carrierRepairDronesLevel: number; // 0 to 3 (Automated repair drones level)
+  carrierPointDefenseLevel: number; // 0 to 3 (Hangar Point Defense level)
 }
 
 export interface PlayerStats {

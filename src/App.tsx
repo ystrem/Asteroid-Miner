@@ -18,6 +18,7 @@ import {
   OreType,
   Player,
   CarrierClass,
+  PlayerShipClass,
   CapitalShipType,
   CapitalShipStation,
   CapitalShip,
@@ -280,6 +281,7 @@ export default function App() {
   const lasersRef = useRef<Laser[]>([]);
   const socksRef = useRef<SockEntity[]>([]);
   const dronesRef = useRef<any[]>([]);
+  const carrierRepairDronesRef = useRef<any[]>([]);
   const bossRef = useRef<Boss | null>(null);
   const wormholeRef = useRef<any | null>(null);
   const oresRef = useRef<Ore[]>([]);
@@ -347,6 +349,8 @@ export default function App() {
   const currentSectorIdRef = useRef<string>(currentSectorId);
   const dockedPlayerIdsRef = useRef<string[]>([]);
   const lastCarrierFiredRef = useRef<number>(0);
+  const lastPdsFiredRef = useRef<number>(0);
+  const activePdsBeamsRef = useRef<{ fromX: number; fromY: number; toX: number; toY: number; alpha: number }[]>([]);
 
   const capitalShipModeRef = useRef<boolean>(capitalShipMode);
   const capitalShipRef = useRef<CapitalShip | null>(capitalShip);
@@ -412,6 +416,8 @@ export default function App() {
   const emStormTimerRef = useRef<number>(0);
   const emStormActiveRef = useRef<boolean>(false);
   const emStormNextTriggerRef = useRef<number>(600); // Ticks until next EM storm
+  const stationaryTicksRef = useRef<number>(0);
+  const scanActiveTicksRef = useRef<number>(0);
 
   const piratesRef = useRef<Pirate[]>([]);
   const pirateLasersRef = useRef<PirateLaser[]>([]);
@@ -1479,6 +1485,7 @@ export default function App() {
     lasersRef.current = [];
     socksRef.current = [];
     dronesRef.current = [];
+    carrierRepairDronesRef.current = [];
     lavaProjectilesRef.current = [];
     blizzardZonesRef.current = [];
     bossGuidedFireballsRef.current = [];
@@ -1619,7 +1626,12 @@ export default function App() {
     saveUpgrades(updatedUpgrades);
     saveStats(updatedStats);
 
-    addGainNotification(`ZAKOUPENO: ${id === 'laserLevel' ? 'Úroveň laseru ' : id === 'magnetLevel' ? 'Úroveň magnetu ' : 'Úroveň modulu '}${nextLevel}`, '#f59e0b');
+    let nameCzech = 'Úroveň modulu ';
+    if (id === 'laserLevel') nameCzech = 'Úroveň laseru ';
+    else if (id === 'magnetLevel') nameCzech = 'Úroveň magnetu ';
+    else if (id === 'carrierRepairDronesLevel') nameCzech = 'Opravné drony ';
+    else if (id === 'carrierPointDefenseLevel') nameCzech = 'Obranný systém ';
+    addGainNotification(`ZAKOUPENO: ${nameCzech}${nextLevel}`, '#f59e0b');
   };
 
   const getScoreMultiplierFromRef = () => {
@@ -1713,6 +1725,8 @@ export default function App() {
       carrierHyperdriveRangeLevel: 1,
       carrierRepairBayLevel: 0,
       carrierCargoHoldLevel: 0,
+      carrierRepairDronesLevel: 0,
+      carrierPointDefenseLevel: 0,
     };
 
     setStats(updatedStats);
@@ -1721,6 +1735,53 @@ export default function App() {
     saveUpgrades(updatedUpgrades);
 
     addGainNotification(`ZAKOUPENA MATEŘSKÁ LOĎ!`, '#eab308');
+    playUpgradeSound();
+  };
+
+  const handleBuyPlayerShipClass = (playerShipClass: PlayerShipClass, costs: { crystals: number; diamonds: number; obsidian: number }) => {
+    if (stats.crystals < costs.crystals || stats.diamonds < costs.diamonds || stats.obsidian < costs.obsidian) return;
+
+    const updatedStats = {
+      ...stats,
+      crystals: stats.crystals - costs.crystals,
+      diamonds: stats.diamonds - costs.diamonds,
+      obsidian: stats.obsidian - costs.obsidian,
+    };
+
+    const updatedUpgrades = {
+      ...upgrades,
+      playerShipClass,
+    };
+
+    setStats(updatedStats);
+    setUpgrades(updatedUpgrades);
+    saveStats(updatedStats);
+    saveUpgrades(updatedUpgrades);
+
+    // Apply max HP update instantly so player gets healed slightly or max HP increases
+    let classHullBonus = 0;
+    if (playerShipClass === 'interceptor') classHullBonus = 30;
+    else if (playerShipClass === 'cruiser') classHullBonus = 60;
+    else if (playerShipClass === 'dreadnought') classHullBonus = 120;
+
+    const baseMaxHull = 100 + (upgrades.hullLevel - 1) * 50 + (upgrades.hullLevel >= 5 ? 20 : 0) + (upgrades.hullLevel >= 6 ? 30 : 0);
+    const newMaxHull = baseMaxHull + classHullBonus;
+    setMaxHull(newMaxHull);
+    maxHullRef.current = newMaxHull;
+
+    playersRef.current.forEach(p => {
+      p.maxHull = newMaxHull;
+      // Heal player somewhat on upgrade
+      p.hull = Math.min(newMaxHull, p.hull + classHullBonus);
+    });
+
+    setHull(playersRef.current[0]?.hull || 100);
+
+    const shipName = playerShipClass === 'interceptor' ? 'Těžký Interceptor' :
+                     playerShipClass === 'cruiser' ? 'Útočný křižník' :
+                     playerShipClass === 'dreadnought' ? 'Těžký Dreadnought' : 'Standardní stíhač';
+
+    addGainNotification(`ZAKOUPENA LOĎ: ${shipName}!`, '#38bdf8');
     playUpgradeSound();
   };
 
@@ -1929,6 +1990,7 @@ export default function App() {
       quantumMirrorLevel: 0,
       toxicTrailLevel: 0,
       salvageMagnetLevel: 0,
+      playerShipClass: 'standard',
       carrierClass: 'none',
       carrierHullLevel: 0,
       carrierShieldLevel: 0,
@@ -1939,6 +2001,8 @@ export default function App() {
       carrierHyperdriveRangeLevel: 1,
       carrierRepairBayLevel: 0,
       carrierCargoHoldLevel: 0,
+      carrierRepairDronesLevel: 0,
+      carrierPointDefenseLevel: 0,
     };
 
     setUpgrades(cleanUpgrades);
@@ -3504,6 +3568,77 @@ export default function App() {
               });
             }
           }
+
+          // --- AUTOMATIC DEFENSE TURRETS FOR CRUISER / DREADNOUGHT ---
+          const sClass = upgradesRef.current.playerShipClass || 'standard';
+          if ((sClass === 'cruiser' || sClass === 'dreadnought') && !dockedPlayerIdsRef.current.includes(p.id)) {
+            // 1. Every frame: Find closest threat to orient the turret
+            let target: any = null;
+            let targetDist = 380; // max turret range
+
+            if (piratesRef.current && piratesRef.current.length > 0) {
+              piratesRef.current.forEach(pirate => {
+                const dist = Math.hypot(pirate.x - p.x, pirate.y - p.y);
+                if (dist < targetDist) {
+                  targetDist = dist;
+                  target = pirate;
+                }
+              });
+            }
+
+            if (!target) {
+              asteroidsRef.current.forEach(ast => {
+                const dist = Math.hypot(ast.x - p.x, ast.y - p.y);
+                if (dist < targetDist) {
+                  targetDist = dist;
+                  target = ast;
+                }
+              });
+            }
+
+            // Update turret tracking angle or passive idle spin
+            if (target) {
+              const desiredAngle = Math.atan2(target.y - p.y, target.x - p.x);
+              (p as any).turretAngle = desiredAngle;
+            } else {
+              (p as any).turretAngle = ((p as any).turretAngle || 0) + 0.035;
+            }
+
+            // 2. Cooldown check: Firing automatic weapon
+            const turretInterval = sClass === 'dreadnought' ? 1200 : 1500;
+            const lastFired = (p as any).lastAutoTurretFired || 0;
+            if (target && Date.now() - lastFired > turretInterval) {
+              (p as any).lastAutoTurretFired = Date.now();
+              const fireAngle = (p as any).turretAngle;
+              
+              // Cruiser fires 1 automatic laser towards the target
+              // Dreadnought fires 2 automatic lasers
+              const numShots = sClass === 'dreadnought' ? 2 : 1;
+              for (let i = 0; i < numShots; i++) {
+                const offset = numShots === 2 ? (i === 0 ? -12 : 12) : 0;
+                const bx = p.x + Math.cos(fireAngle) * 15 + Math.cos(fireAngle + Math.PI/2) * offset;
+                const by = p.y + Math.sin(fireAngle) * 15 + Math.sin(fireAngle + Math.PI/2) * offset;
+                
+                lasersRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: bx,
+                  y: by,
+                  vx: Math.cos(fireAngle) * 8.5,
+                  vy: Math.sin(fireAngle) * 8.5,
+                  angle: fireAngle,
+                  damage: sClass === 'dreadnought' ? 2.0 : 1.5,
+                  isPiercing: false,
+                  piercedAsteroidIds: [],
+                  radius: 3.5,
+                  width: 3.5,
+                  color: p.playerNum === 1 ? '#ef4444' : '#ec4899', // color match player
+                  lifetime: 0,
+                  maxLifetime: 60,
+                });
+              }
+                playLaserSound(2);
+            }
+          }
         } else {
           // Slow down wreckage slow-drift
           p.vx *= 0.96;
@@ -4312,12 +4447,114 @@ export default function App() {
       });
     });
 
+    // Update active PDS beams alpha
+    activePdsBeamsRef.current.forEach(beam => {
+      beam.alpha -= 0.08;
+    });
+    activePdsBeamsRef.current = activePdsBeamsRef.current.filter(beam => beam.alpha > 0);
+
+    // --- HANGAR POINT DEFENSE SYSTEM (PDS) ---
+    const pdsLevel = upgradesRef.current.carrierPointDefenseLevel || 0;
+    if (pdsLevel > 0) {
+      // Find source coordinate (Carrier or Capital Ship)
+      let pdsSourceX: number | null = null;
+      let pdsSourceY: number | null = null;
+
+      if (capitalShipModeRef.current && capitalShipRef.current) {
+        pdsSourceX = capitalShipRef.current.x;
+        pdsSourceY = capitalShipRef.current.y;
+      } else if (upgradesRef.current.carrierClass !== 'none' && carrierRef.current) {
+        pdsSourceX = carrierRef.current.x;
+        pdsSourceY = carrierRef.current.y;
+      }
+
+      if (pdsSourceX !== null && pdsSourceY !== null) {
+        const pdsRange = pdsLevel === 1 ? 150 : pdsLevel === 2 ? 200 : 250;
+        const pdsCooldown = pdsLevel === 1 ? 180 : pdsLevel === 2 ? 120 : 60;
+
+        if (lastPdsFiredRef.current === undefined) {
+          lastPdsFiredRef.current = 0;
+        }
+
+        lastPdsFiredRef.current++;
+
+        if (lastPdsFiredRef.current >= pdsCooldown) {
+          let closestLaser: PirateLaser | null = null;
+          let minDistance = pdsRange;
+
+          pirateLasersRef.current.forEach(pl => {
+            if (pl.lifetime < pl.maxLifetime) {
+              const d = Math.hypot(pl.x - pdsSourceX!, pl.y - pdsSourceY!);
+              if (d < minDistance) {
+                minDistance = d;
+                closestLaser = pl;
+              }
+            }
+          });
+
+          if (closestLaser) {
+            (closestLaser as PirateLaser).lifetime = (closestLaser as PirateLaser).maxLifetime;
+            lastPdsFiredRef.current = 0;
+
+            activePdsBeamsRef.current.push({
+              fromX: pdsSourceX,
+              fromY: pdsSourceY,
+              toX: (closestLaser as PirateLaser).x,
+              toY: (closestLaser as PirateLaser).y,
+              alpha: 1.0,
+            });
+
+            for (let i = 0; i < 15; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: (closestLaser as PirateLaser).x,
+                y: (closestLaser as PirateLaser).y,
+                vx: (Math.random() - 0.5) * 6,
+                vy: (Math.random() - 0.5) * 6,
+                color: '#38bdf8',
+                size: Math.random() * 3 + 1,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 30 + Math.random() * 20,
+              });
+            }
+
+            playLaserSound(2);
+            addGainNotification(`🛡️ PDS: Sestřelena korzárská střela!`, '#38bdf8');
+          }
+        }
+      }
+    }
+
     // Remove stale pirate lasers
     pirateLasersRef.current = pirateLasersRef.current.filter(pl => pl.lifetime < pl.maxLifetime);
 
     // =========================================================================
     // --- CUSTOM SECTOR ANOMALIES & TACTICAL UPGRADE DYNAMIC UPDATES ---
     // =========================================================================
+
+    // --- TACTICAL RADAR SCANNING PROCESSOR ---
+    const primaryPlayer = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
+    if (primaryPlayer && isPlayingRef.current && !isShopOpenRef.current) {
+      const isStationary = Math.hypot(primaryPlayer.vx || 0, primaryPlayer.vy || 0) < 0.1;
+      if (isStationary) {
+        stationaryTicksRef.current++;
+        if (stationaryTicksRef.current === 120) { // 2.0 seconds stationary
+          scanActiveTicksRef.current = 300; // 5.0 seconds scan duration
+          addGainNotification("📡 TAKTICKÝ SKEN: Lokalizována vzácná ložiska rud!", "#a855f7");
+          addCombatLogMessage("📡 Taktický skener dokončil hluboký sken okolí a zvýraznil ložiska.", "#a855f7");
+          playUpgradeSound();
+        }
+      } else {
+        stationaryTicksRef.current = 0;
+      }
+    } else {
+      stationaryTicksRef.current = 0;
+    }
+
+    if (scanActiveTicksRef.current > 0) {
+      scanActiveTicksRef.current--;
+    }
 
     // 1. Sektor Beta: Magmatické peklo (Lava projectile eruptions)
     if (selectedMapRef.current === 'magma') {
@@ -5761,6 +5998,130 @@ export default function App() {
     } else {
       // Clear if no living player or no level
       dronesRef.current = [];
+      carrierRepairDronesRef.current = [];
+    }
+
+    // --- AUTOMATED CARRIER REPAIR DRONES FOR CAPITAL SHIP ---
+    if (capitalShipModeRef.current && capitalShipRef.current && (upgradesRef.current.carrierRepairDronesLevel || 0) > 0) {
+      const ship = capitalShipRef.current;
+      const dronesNeeded = upgradesRef.current.carrierRepairDronesLevel || 0;
+
+      // Trigger condition: hull is below 50%
+      if (ship.hull < ship.maxHull * 0.5) {
+        if (!(ship as any).repairDronesActive) {
+          (ship as any).repairDronesActive = true;
+          addGainNotification(`⚠️ INŽENÝR: Detekováno kritické poškození (<50%)! Spouštím opravné drony!`, '#eab308');
+        }
+      }
+      
+      // Deactivate condition: hull reaches 100%
+      if (ship.hull >= ship.maxHull) {
+        if ((ship as any).repairDronesActive) {
+          (ship as any).repairDronesActive = false;
+          addGainNotification(`✅ INŽENÝR: Opravy dokončeny. Opravné drony se vracejí do hangáru.`, '#10b981');
+        }
+      }
+
+      if ((ship as any).repairDronesActive) {
+        // Instantiate drones if list is smaller
+        if (carrierRepairDronesRef.current.length < dronesNeeded) {
+          while (carrierRepairDronesRef.current.length < dronesNeeded) {
+            carrierRepairDronesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: ship.x + (Math.random() - 0.5) * 120,
+              y: ship.y + (Math.random() - 0.5) * 120,
+              vx: 0,
+              vy: 0,
+              angle: Math.random() * Math.PI * 2,
+              orbitOffset: carrierRepairDronesRef.current.length * (Math.PI * 2 / 3),
+              repairBeamActive: false,
+            });
+          }
+        } else if (carrierRepairDronesRef.current.length > dronesNeeded) {
+          carrierRepairDronesRef.current = carrierRepairDronesRef.current.slice(0, dronesNeeded);
+        }
+
+        // Update drones physics
+        carrierRepairDronesRef.current.forEach((drone, index) => {
+          // They orbit the Capital Ship smoothly
+          drone.orbitOffset += 0.025;
+          const distFromShip = 90 + index * 20;
+          const targetX = ship.x + Math.cos(drone.orbitOffset) * distFromShip;
+          const targetY = ship.y + Math.sin(drone.orbitOffset) * distFromShip;
+
+          const dx = targetX - drone.x;
+          const dy = targetY - drone.y;
+          const dist = Math.hypot(dx, dy);
+
+          const force = 0.35;
+          drone.vx += (dx / Math.max(1, dist)) * force;
+          drone.vy += (dy / Math.max(1, dist)) * force;
+          drone.vx *= 0.88;
+          drone.vy *= 0.88;
+
+          drone.x += drone.vx;
+          drone.y += drone.vy;
+          drone.angle = Math.atan2(ship.y - drone.y, ship.x - drone.x); // face the Capital Ship
+          
+          // Healing beam active
+          drone.repairBeamActive = true;
+          
+          // Repair value per frame per drone
+          const healAmount = 0.04 * dronesNeeded;
+          ship.hull = Math.min(ship.maxHull, ship.hull + healAmount);
+
+          // Update state so HUD gets the value
+          if (index === 0) {
+            setHull(Math.round(ship.hull));
+          }
+
+          // Spawn healing green particles flowing from drone to the Capital Ship!
+          if (Math.random() < 0.2) {
+            const beamT = Math.random();
+            const px = drone.x + (ship.x - drone.x) * beamT + (Math.random() - 0.5) * 10;
+            const py = drone.y + (ship.y - drone.y) * beamT + (Math.random() - 0.5) * 10;
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: px,
+              y: py,
+              vx: (Math.random() - 0.5) * 0.4,
+              vy: (Math.random() - 0.5) * 0.4,
+              color: '#4ade80', // vibrant green
+              size: Math.random() * 2 + 1,
+              alpha: 0.8,
+              lifetime: 0,
+              maxLifetime: 20,
+            });
+          }
+        });
+      } else {
+        // Return to hangar smoothly
+        if (carrierRepairDronesRef.current.length > 0) {
+          let allInside = true;
+          carrierRepairDronesRef.current.forEach(drone => {
+            const dx = ship.x - drone.x;
+            const dy = ship.y - drone.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 15) {
+              allInside = false;
+              const force = 0.5;
+              drone.vx += (dx / Math.max(1, dist)) * force;
+              drone.vy += (dy / Math.max(1, dist)) * force;
+              drone.vx *= 0.85;
+              drone.vy *= 0.85;
+              drone.x += drone.vx;
+              drone.y += drone.vy;
+              drone.angle = Math.atan2(drone.vy, drone.vx);
+              drone.repairBeamActive = false;
+            }
+          });
+          if (allInside) {
+            carrierRepairDronesRef.current = [];
+          }
+        }
+      }
+    } else {
+      carrierRepairDronesRef.current = [];
     }
 
     // --- SHIP CRASH CHECK FOR ALL ACTIVE PLAYERS ---
@@ -7252,6 +7613,121 @@ export default function App() {
         ctx.restore();
       });
 
+      // --- DRAW CARRIER AUTOMATED REPAIR DRONES ---
+      if (capitalShipModeRef.current && capitalShipRef.current) {
+        const ship = capitalShipRef.current;
+        carrierRepairDronesRef.current.forEach(drone => {
+          const dx = drone.x - camX;
+          const dy = drone.y - camY;
+
+          // 1. Draw green healing laser beam
+          if (drone.repairBeamActive) {
+            const tx = ship.x - camX;
+            const ty = ship.y - camY;
+
+            ctx.save();
+            ctx.strokeStyle = '#4ade80'; // vibrant green
+            ctx.lineWidth = 2.0 + Math.sin(Date.now() / 40) * 0.8;
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = '#22c55e';
+            ctx.beginPath();
+            ctx.moveTo(dx, dy);
+            ctx.lineTo(tx, ty);
+            ctx.stroke();
+
+            // Inner intense white healing core
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(dx, dy);
+            ctx.lineTo(tx, ty);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // 2. Draw Repair Drone body
+          ctx.save();
+          ctx.translate(dx, dy);
+          ctx.rotate(drone.angle);
+
+          // Glowing green drop shadow
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#22c55e';
+
+          // Small green thruster flame
+          const flameLen = 6 + Math.random() * 5;
+          const flameGrad = ctx.createLinearGradient(-8, 0, -8 - flameLen, 0);
+          flameGrad.addColorStop(0, '#22c55e');
+          flameGrad.addColorStop(1, 'rgba(34, 197, 94, 0)');
+          ctx.fillStyle = flameGrad;
+          ctx.beginPath();
+          ctx.moveTo(-6, -2);
+          ctx.lineTo(-6 - flameLen, 0);
+          ctx.lineTo(-6, 2);
+          ctx.closePath();
+          ctx.fill();
+
+          // Drone body - circular slate dome with glowing green center ring
+          ctx.fillStyle = '#1e293b'; // dark slate
+          ctx.strokeStyle = '#22c55e'; // green border
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Green healing sensor dome
+          ctx.fillStyle = '#4ade80';
+          ctx.beginPath();
+          ctx.arc(3, 0, 3, -Math.PI / 2, Math.PI / 2);
+          ctx.fill();
+
+          // Side micro-arms/solar panels
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(-1, -6);
+          ctx.lineTo(-3, -10);
+          ctx.lineTo(1, -10);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(-1, 6);
+          ctx.lineTo(-3, 10);
+          ctx.lineTo(1, 10);
+          ctx.stroke();
+
+          ctx.restore();
+        });
+      }
+
+      // --- DRAW CARRIER POINT DEFENSE BEAMS (PDS) ---
+      activePdsBeamsRef.current.forEach(beam => {
+        const fx = beam.fromX - camX;
+        const fy = beam.fromY - camY;
+        const tx = beam.toX - camX;
+        const ty = beam.toY - camY;
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(56, 189, 248, ${beam.alpha})`; // electric cyan-blue
+        ctx.lineWidth = 3.5 * beam.alpha;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#0ea5e9';
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+
+        // White core
+        ctx.strokeStyle = `rgba(255, 255, 255, ${beam.alpha})`;
+        ctx.lineWidth = 1.2 * beam.alpha;
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.restore();
+      });
+
       // --- DRAW SPATIAL ANOMALY ---
       if (activeAnomalyRef.current) {
         const anomaly = activeAnomalyRef.current;
@@ -7663,27 +8139,157 @@ export default function App() {
         ctx.lineWidth = hullFlashActive ? 4.0 : 2.5;
         ctx.lineJoin = 'miter';
 
-        ctx.beginPath();
-        ctx.moveTo(22, 0);
-        ctx.lineTo(-10, -16);
-        ctx.lineTo(-18, -12);
-        ctx.lineTo(-14, -5);
-        ctx.lineTo(-14, 5);
-        ctx.lineTo(-18, 12);
-        ctx.lineTo(-10, 16);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        const sClass = upgradesRef.current.playerShipClass || 'standard';
 
-        ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#ec4899';
-        ctx.beginPath();
-        ctx.moveTo(10, 0);
-        ctx.lineTo(0, -5);
-        ctx.lineTo(-6, -3);
-        ctx.lineTo(-6, 3);
-        ctx.lineTo(0, 5);
-        ctx.closePath();
-        ctx.fill();
+        if (sClass === 'standard') {
+          ctx.beginPath();
+          ctx.moveTo(22, 0);
+          ctx.lineTo(-10, -16);
+          ctx.lineTo(-18, -12);
+          ctx.lineTo(-14, -5);
+          ctx.lineTo(-14, 5);
+          ctx.lineTo(-18, 12);
+          ctx.lineTo(-10, 16);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#ec4899';
+          ctx.beginPath();
+          ctx.moveTo(10, 0);
+          ctx.lineTo(0, -5);
+          ctx.lineTo(-6, -3);
+          ctx.lineTo(-6, 3);
+          ctx.lineTo(0, 5);
+          ctx.closePath();
+          ctx.fill();
+        } 
+        else if (sClass === 'interceptor') {
+          // Sleek wide wings, double engines
+          ctx.beginPath();
+          ctx.moveTo(26, 0);
+          ctx.lineTo(-2, -10);
+          ctx.lineTo(-14, -22); // wingtip
+          ctx.lineTo(-20, -18);
+          ctx.lineTo(-14, -6);
+          ctx.lineTo(-14, 6);
+          ctx.lineTo(-20, 18);
+          ctx.lineTo(-14, 22); // wingtip
+          ctx.lineTo(-2, 10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Canopy
+          ctx.fillStyle = playerNum === 1 ? '#22d3ee' : '#f472b6';
+          ctx.beginPath();
+          ctx.moveTo(14, 0);
+          ctx.lineTo(2, -4);
+          ctx.lineTo(-4, -2);
+          ctx.lineTo(-4, 2);
+          ctx.lineTo(2, 4);
+          ctx.closePath();
+          ctx.fill();
+        } 
+        else if (sClass === 'cruiser') {
+          // Forked double hull, revolving center turret ring
+          ctx.beginPath();
+          ctx.moveTo(26, -6);
+          ctx.lineTo(10, -18);
+          ctx.lineTo(-16, -18);
+          ctx.lineTo(-12, -4);
+          ctx.lineTo(-12, 4);
+          ctx.lineTo(-16, 18);
+          ctx.lineTo(10, 18);
+          ctx.lineTo(26, 6);
+          ctx.lineTo(4, 0); // catamaran fork
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Canopy on both sides
+          ctx.fillStyle = playerNum === 1 ? '#0ea5e9' : '#db2777';
+          ctx.beginPath();
+          ctx.moveTo(18, -7); ctx.lineTo(10, -12); ctx.lineTo(4, -10); ctx.lineTo(4, -5); ctx.closePath();
+          ctx.moveTo(18, 7); ctx.lineTo(10, 12); ctx.lineTo(4, 10); ctx.lineTo(4, 5); ctx.closePath();
+          ctx.fill();
+
+          // Render Revolving Auto-Turret Ring in the middle!
+          ctx.save();
+          const tAng = (p as any).turretAngle || 0;
+          ctx.rotate(tAng - p.angle); // turretAngle is absolute, we are rotated by p.angle
+          ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+          ctx.lineWidth = 1.5;
+          ctx.fillStyle = '#475569';
+          ctx.beginPath();
+          ctx.arc(0, 0, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Turret barrel
+          ctx.strokeStyle = playerNum === 1 ? '#ef4444' : '#ec4899';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(14, 0);
+          ctx.stroke();
+          ctx.restore();
+        } 
+        else if (sClass === 'dreadnought') {
+          // Heavy shielded hexagonal fortress
+          ctx.beginPath();
+          ctx.moveTo(28, 0);
+          ctx.lineTo(14, -15);
+          ctx.lineTo(-10, -22);
+          ctx.lineTo(-24, -14);
+          ctx.lineTo(-16, -6);
+          ctx.lineTo(-16, 6);
+          ctx.lineTo(-24, 14);
+          ctx.lineTo(-10, 22);
+          ctx.lineTo(14, 15);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Heavy armored canopy
+          ctx.fillStyle = playerNum === 1 ? '#0284c7' : '#a21caf';
+          ctx.beginPath();
+          ctx.moveTo(16, 0);
+          ctx.lineTo(4, -7);
+          ctx.lineTo(-8, -4);
+          ctx.lineTo(-8, 4);
+          ctx.lineTo(4, 7);
+          ctx.closePath();
+          ctx.fill();
+
+          // Draw dual side turrets tracking the target!
+          const tAng = (p as any).turretAngle || 0;
+          const relativeTurretAng = tAng - p.angle;
+
+          // Turret Left at -14
+          ctx.save();
+          ctx.translate(-4, -14);
+          ctx.rotate(relativeTurretAng);
+          ctx.fillStyle = '#475569';
+          ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.strokeStyle = playerNum === 1 ? '#ef4444' : '#ec4899'; ctx.lineWidth = 2.0;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(10, 0); ctx.stroke();
+          ctx.restore();
+
+          // Turret Right at 14
+          ctx.save();
+          ctx.translate(-4, 14);
+          ctx.rotate(relativeTurretAng);
+          ctx.fillStyle = '#475569';
+          ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.strokeStyle = playerNum === 1 ? '#ef4444' : '#ec4899'; ctx.lineWidth = 2.0;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(10, 0); ctx.stroke();
+          ctx.restore();
+        }
 
         ctx.strokeStyle = playerNum === 1 ? '#f87171' : '#c084fc';
         ctx.lineWidth = 2;
@@ -8879,6 +9485,82 @@ export default function App() {
               }
             }
           });
+
+          // Draw High-Value Ores on Radar when scan is active
+          if (scanActiveTicksRef.current > 0) {
+            oresRef.current.forEach(ore => {
+              if (ore.type === 'diamond' || ore.type === 'obsidian') {
+                const dx = ore.x - centerPlayer.x;
+                const dy = ore.y - centerPlayer.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist < radarRange) {
+                  const ox = cx + dx * scale;
+                  const oy = cy + dy * scale;
+
+                  ctx.beginPath();
+                  ctx.arc(ox, oy, 6.0, 0, Math.PI * 2);
+                  ctx.fillStyle = ore.type === 'diamond' ? 'rgba(56, 189, 248, 0.45)' : 'rgba(168, 85, 247, 0.45)';
+                  ctx.fill();
+
+                  const blink = Math.floor(Date.now() / 150) % 2 === 0;
+                  ctx.strokeStyle = blink ? '#ffffff' : (ore.type === 'diamond' ? '#38bdf8' : '#a855f7');
+                  ctx.lineWidth = 1.0;
+                  
+                  ctx.beginPath();
+                  ctx.arc(ox, oy, 4.0, 0, Math.PI * 2);
+                  ctx.stroke();
+
+                  ctx.beginPath();
+                  ctx.moveTo(ox - 6, oy); ctx.lineTo(ox - 2, oy);
+                  ctx.moveTo(ox + 2, oy); ctx.lineTo(ox + 6, oy);
+                  ctx.moveTo(ox, oy - 6); ctx.lineTo(ox, oy - 2);
+                  ctx.moveTo(ox, oy + 2); ctx.lineTo(ox, oy + 6);
+                  ctx.stroke();
+                }
+              }
+            });
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 74, 0, Math.PI * 2);
+            ctx.clip();
+
+            const scanY = cy - 74 + ((Date.now() / 6) % 148);
+            const scanGrad = ctx.createLinearGradient(0, scanY - 12, 0, scanY);
+            scanGrad.addColorStop(0, 'rgba(168, 85, 247, 0.0)');
+            scanGrad.addColorStop(1, 'rgba(168, 85, 247, 0.22)');
+            ctx.fillStyle = scanGrad;
+            ctx.fillRect(cx - 74, scanY - 12, 148, 12);
+
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.8)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(cx - 74, scanY);
+            ctx.lineTo(cx + 74, scanY);
+            ctx.stroke();
+
+            ctx.restore();
+
+            const remainingS = (scanActiveTicksRef.current / 60).toFixed(1);
+            ctx.font = '900 8px monospace';
+            ctx.fillStyle = '#a855f7';
+            ctx.textAlign = 'center';
+            ctx.fillText(`📡 SKEN: ${remainingS}s`, cx, cy - 65);
+          } else {
+            if (stationaryTicksRef.current > 0) {
+              const chargePct = Math.min(1.0, stationaryTicksRef.current / 120);
+              ctx.strokeStyle = 'rgba(168, 85, 247, 0.55)';
+              ctx.lineWidth = 2.0;
+              ctx.beginPath();
+              ctx.arc(cx, cy, 74.5, -Math.PI / 2, -Math.PI / 2 + chargePct * Math.PI * 2);
+              ctx.stroke();
+
+              ctx.font = 'bold 7px monospace';
+              ctx.fillStyle = '#a855f7';
+              ctx.textAlign = 'center';
+              ctx.fillText(`KALIBRACE...`, cx, cy + 65);
+            }
+          }
         }
 
         // Map label overlay
@@ -10496,6 +11178,7 @@ export default function App() {
         onRechargeShield={handleRechargeShield}
         onBuyDeuterium={handleBuyDeuterium}
         onBuyCarrierClass={handleBuyCarrierClass}
+        onBuyPlayerShipClass={handleBuyPlayerShipClass}
         currentHull={hull}
         maxHull={maxHull}
         currentShield={shield}

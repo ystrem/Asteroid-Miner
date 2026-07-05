@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Upgrades, PlayerStats, CarrierClass } from '../types';
+import { Upgrades, PlayerStats, CarrierClass, PlayerShipClass } from '../types';
 import { playUpgradeSound } from '../utils/audio';
 import { 
   Sparkles, 
@@ -40,6 +40,7 @@ interface UpgradeShopProps {
   onRechargeShield: (diamondsCost: number) => void;
   onBuyDeuterium?: (diamondsCost: number, amount: number) => void;
   onBuyCarrierClass?: (carrierClass: CarrierClass, costs: { crystals: number; diamonds: number; obsidian: number }) => void;
+  onBuyPlayerShipClass?: (shipClass: PlayerShipClass, costs: { crystals: number; diamonds: number; obsidian: number }) => void;
 }
 
 export const CARRIER_CLASSES = [
@@ -229,6 +230,28 @@ export const CARRIER_UPGRADES: CarrierUpgradeType[] = [
       { level: 2, title: 'Fázová komprese', description: 'Těžařský bonus k prodeji +35%', costs: { crystals: 0, diamonds: 50, obsidian: 12 } },
       { level: 3, title: 'Singulární smrštění', description: 'Těžařský bonus k prodeji +60%', costs: { crystals: 0, diamonds: 120, obsidian: 30 } }
     ]
+  },
+  {
+    id: 'carrierRepairDronesLevel',
+    name: 'Opravné Drony Inženýra',
+    description: 'Aktivuje autonomní nanorobotické drony, které vyletí z hangáru a začnou bleskově opravovat mateřskou / hlavní loď, pokud její trup klesne pod 50%.',
+    maxLevel: 3,
+    levels: [
+      { level: 1, title: 'Opravný dron: Alpha', description: 'Vypustí 1 opravného drona při poškození pod 50% (~5 HP/s vylepšení)', costs: { crystals: 0, diamonds: 40, obsidian: 10 } },
+      { level: 2, title: 'Roj nano-svařovačů: Beta', description: 'Vypustí 2 opravné drony s rychlým léčením (~10 HP/s vylepšení)', costs: { crystals: 0, diamonds: 100, obsidian: 25 } },
+      { level: 3, title: 'Nanobotí štítová garda: Gamma', description: 'Vypustí 3 super-drony pro maximální bojeschopnost (~15 HP/s vylepšení)', costs: { crystals: 0, diamonds: 220, obsidian: 60 } }
+    ]
+  },
+  {
+    id: 'carrierPointDefenseLevel',
+    name: 'Obranný Systém Hangáru',
+    description: 'Nainstaluje plně automatickou bodovou zbraňovou věž (Point Defense System), která skenuje okolí a sestřeluje nepřátelské pirátské střely mířící na loď.',
+    maxLevel: 3,
+    levels: [
+      { level: 1, title: 'PDS: Sentinel', description: 'Sestřelí 1 raketu/střelu každých 3.0 s v dosahu 150 px', costs: { crystals: 0, diamonds: 50, obsidian: 15 } },
+      { level: 2, title: 'PDS: Aegis', description: 'Sestřelí 1 raketu/střelu každých 2.0 s v dosahu 200 px', costs: { crystals: 0, diamonds: 120, obsidian: 30 } },
+      { level: 3, title: 'PDS: Guardian Aura', description: 'Sestřelí 1 raketu/střelu každých 1.0 s v dosahu 250 px', costs: { crystals: 0, diamonds: 250, obsidian: 70 } }
+    ]
   }
 ];
 
@@ -266,8 +289,9 @@ export default function UpgradeShop({
   onRechargeShield,
   onBuyDeuterium,
   onBuyCarrierClass,
+  onBuyPlayerShipClass,
 }: UpgradeShopProps) {
-  const [activeTab, setActiveTab] = useState<'upgrades' | 'repairs' | 'carrier'>('upgrades');
+  const [activeTab, setActiveTab] = useState<'upgrades' | 'repairs' | 'shipyard' | 'carrier'>('upgrades');
   const [selectedTechId, setSelectedTechId] = useState<keyof Upgrades>('laserLevel');
   const [hasPurchasedThisSession, setHasPurchasedThisSession] = useState<boolean>(false);
 
@@ -915,6 +939,17 @@ export default function UpgradeShop({
             🔧 ÚDRŽBA LODI (OPRAVY & ŠTÍTY)
           </button>
           <button
+            onClick={() => setActiveTab('shipyard')}
+            className={`flex-1 py-2.5 text-center rounded-lg transition-all cursor-pointer ${
+              activeTab === 'shipyard'
+                ? 'bg-sky-950/50 text-sky-300 font-bold border-b-2 border-sky-500 shadow-[inset_0_-10px_15px_-10px_rgba(56,189,248,0.2)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+            }`}
+            id="tab-shipyard"
+          >
+            🛠️ LODĚNICE (NÁKUP LODÍ)
+          </button>
+          <button
             onClick={() => setActiveTab('carrier')}
             className={`flex-1 py-2.5 text-center rounded-lg transition-all cursor-pointer ${
               activeTab === 'carrier'
@@ -1338,6 +1373,148 @@ export default function UpgradeShop({
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        ) : activeTab === 'shipyard' ? (
+          /* Tab LODĚNICE (NÁKUP LODÍ) */
+          <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-950/30" id="shipyard-tab">
+            <div className="bg-sky-950/20 border border-sky-500/30 rounded-xl p-4 flex items-center gap-3 shadow-[0_2px_15px_rgba(0,0,0,0.2)]">
+              <Ship className="w-8 h-8 text-sky-400 shrink-0" />
+              <div>
+                <h3 className="font-black text-sm text-sky-300 uppercase tracking-widest font-mono">DOCK LODĚNICE: NÁKUP BOJOVÝCH KLAS</h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  Za vydělané krystaly a vzácné kovy si můžete pořídit větší a pokročilejší lodě. Tyto lodě disponují masivními bonusy k pancíři a automatickými zbraňovými věžemi, které samy vyhledávají a drtí nepřátele!
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[
+                {
+                  id: 'standard' as PlayerShipClass,
+                  name: 'Standardní stíhač',
+                  description: 'Základní víceúčelová stíhačka třídy Raptor. Vyvážené vlastnosti pro začínající piloty.',
+                  bonuses: ['Bez bonusů', 'Základní zbraňový systém'],
+                  costs: { crystals: 0, diamonds: 0, obsidian: 0 },
+                  color: 'slate',
+                  specialText: 'Vhodná pro obratné manévry v těsných asteroidových polích.'
+                },
+                {
+                  id: 'interceptor' as PlayerShipClass,
+                  name: 'Těžký Interceptor',
+                  description: 'Slepecké křídlo upravené pro extrémní rychlost a bleskové útoky.',
+                  bonuses: ['+25% Maximální rychlost', '+25% Akcelerace motorů', '+30 HP k trupu lodi'],
+                  costs: { crystals: 200, diamonds: 50, obsidian: 10 },
+                  color: 'emerald',
+                  specialText: 'Zabudované přetížení trysek pro bleskovou mobilitu.'
+                },
+                {
+                  id: 'cruiser' as PlayerShipClass,
+                  name: 'Útočný křižník',
+                  description: 'Těžší bojová loď s katamaránovým trupem a autonomní palebnou podporou.',
+                  bonuses: ['+60 HP k trupu lodi', '+30 HP ke kapacitě štítů', '1× Automatická laserová věž (auto-target)'],
+                  costs: { crystals: 500, diamonds: 120, obsidian: 30 },
+                  color: 'rose',
+                  specialText: 'Obranná věž v ose lodi střílí na nejbližší asteroidy a piráty každých 1.5 sekundy.'
+                },
+                {
+                  id: 'dreadnought' as PlayerShipClass,
+                  name: 'Těžký Dreadnought',
+                  description: 'Ultimátní bitevní křižník s masivním pancéřováním a zdvojeným zbraňovým arsenálem.',
+                  bonuses: ['+120 HP k trupu lodi', '+60 HP ke kapacitě štítů', '2× Dvouhlavňová automatická děla (rychlá střelba)'],
+                  costs: { crystals: 1000, diamonds: 300, obsidian: 80 },
+                  color: 'amber',
+                  specialText: 'Dvě boční otočné věže pálí zničující salvy v intervalu 1.2 sekundy.'
+                }
+              ].map(ship => {
+                const isOwned = upgrades.playerShipClass === ship.id || (ship.id === 'standard' && !upgrades.playerShipClass);
+                const canAfford = stats.crystals >= ship.costs.crystals && stats.diamonds >= ship.costs.diamonds && stats.obsidian >= ship.costs.obsidian;
+                
+                return (
+                  <div 
+                    key={ship.id}
+                    className={`bg-slate-950/40 border rounded-xl p-5 flex flex-col justify-between transition-all duration-300 relative ${
+                      isOwned 
+                        ? 'border-sky-500 shadow-[0_0_15px_rgba(14,165,233,0.15)] bg-sky-950/5' 
+                        : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {isOwned && (
+                      <div className="absolute top-3 right-3 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[9px] font-bold font-mono px-2 py-0.5 rounded-full">
+                        AKTIVNÍ LOĎ
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="font-bold text-slate-100 text-base">{ship.name}</h4>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">{ship.description}</p>
+                      </div>
+
+                      <div className="space-y-1.5 bg-slate-950/50 p-3 rounded-lg border border-slate-800/60">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Systémové Výhody:</span>
+                        {ship.bonuses.map((b, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-sky-400 font-mono">▸</span>
+                            <span className="text-slate-200">{b}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="text-[11px] italic text-sky-400/80 bg-sky-950/25 px-2.5 py-1.5 rounded border border-sky-900/10 leading-snug">
+                        {ship.specialText}
+                      </div>
+                    </div>
+
+                    <div className="mt-5 pt-3 border-t border-slate-800/40 flex items-center justify-between gap-4">
+                      {/* Costs list */}
+                      <div className="flex gap-2.5 font-mono text-xs">
+                        {ship.costs.crystals > 0 && (
+                          <div className="flex items-center gap-1">
+                            <div className="w-2.5 h-2.5 bg-blue-500 rounded-sm" />
+                            <span className={stats.crystals >= ship.costs.crystals ? 'text-slate-300' : 'text-red-500/80 font-bold'}>
+                              {ship.costs.crystals}
+                            </span>
+                          </div>
+                        )}
+                        {ship.costs.diamonds > 0 && (
+                          <div className="flex items-center gap-1">
+                            <div className="w-2.5 h-2.5 bg-emerald-500 rounded-sm" />
+                            <span className={stats.diamonds >= ship.costs.diamonds ? 'text-slate-300' : 'text-red-500/80 font-bold'}>
+                              {stats.diamonds >= ship.costs.diamonds ? 'text-slate-300' : 'text-red-500/80 font-bold'}
+                            </span>
+                          </div>
+                        )}
+                        {ship.costs.obsidian > 0 && (
+                          <div className="flex items-center gap-1">
+                            <div className="w-2.5 h-2.5 bg-purple-500 rounded-sm" />
+                            <span className={stats.obsidian >= ship.costs.obsidian ? 'text-slate-300' : 'text-red-500/80 font-bold'}>
+                              {ship.costs.obsidian}
+                            </span>
+                          </div>
+                        )}
+                        {ship.costs.crystals === 0 && ship.costs.diamonds === 0 && ship.costs.obsidian === 0 && (
+                          <span className="text-slate-500">Bez poplatku</span>
+                        )}
+                      </div>
+
+                      <button
+                        disabled={isOwned || !canAfford}
+                        onClick={() => onBuyPlayerShipClass && onBuyPlayerShipClass(ship.id, ship.costs)}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-[11px] uppercase tracking-wider transition-all font-mono cursor-pointer ${
+                          isOwned
+                            ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20 cursor-default'
+                            : canAfford
+                              ? 'bg-sky-500 hover:bg-sky-400 text-white shadow-md shadow-sky-500/10 hover:scale-[1.02]'
+                              : 'bg-slate-850 text-slate-500 border border-slate-800/80 cursor-not-allowed'
+                        }`}
+                      >
+                        {isOwned ? 'Vlastněno' : canAfford ? 'Koupit loď' : 'Nedostatek'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : (

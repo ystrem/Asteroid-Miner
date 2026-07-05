@@ -25,6 +25,7 @@ const DEFAULT_UPGRADES: Upgrades = {
   quantumMirrorLevel: 0,
   toxicTrailLevel: 0,
   salvageMagnetLevel: 0,
+  playerShipClass: 'standard',
   
   // Carrier defaults
   carrierClass: 'none',
@@ -37,6 +38,8 @@ const DEFAULT_UPGRADES: Upgrades = {
   carrierHyperdriveRangeLevel: 1,
   carrierRepairBayLevel: 0,
   carrierCargoHoldLevel: 0,
+  carrierRepairDronesLevel: 0,
+  carrierPointDefenseLevel: 0,
 };
 
 const DEFAULT_STATS: PlayerStats = {
