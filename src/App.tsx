@@ -1513,6 +1513,23 @@ export default function App() {
       // Open Upgrade Shop right as we start the boss fight so they can buy!
       setIsShopOpen(true);
       isShopOpenRef.current = true;
+
+      // Add generous temporary tactical shield boost and invulnerability to all players!
+      playersRef.current.forEach(pl => {
+        pl.maxShield += 250;
+        pl.shield = pl.maxShield;
+        pl.invulnerableTime = 180; // 3 seconds of initial immunity
+      });
+      if (carrierRef.current) {
+        carrierRef.current.maxShield += 500;
+        carrierRef.current.shield = carrierRef.current.maxShield;
+      }
+      if (capitalShipRef.current) {
+        capitalShipRef.current.maxShield += 500;
+        capitalShipRef.current.shield = capitalShipRef.current.maxShield;
+      }
+      addGainNotification("🛡️ TAKTICKÝ BONUS: Štíty posíleny (+250) a aktivována imunita na 3 sekundy!", "#22d3ee");
+      addCombatLogMessage("🛡️ Taktická podpora: Všem lodím byly dočasně posíleny štíty pro nadcházející souboj.", "#22d3ee");
       
       let bossMaxHp = 1000; // Exact 1000 HP as requested ("tisíc životů")
       setBossHp(1000);
@@ -1577,6 +1594,7 @@ export default function App() {
     }
 
     boss.hitCount = (boss.hitCount || 0) + customHitsToAdd;
+    boss.lastDamageTime = Date.now();
 
     if (boss.hitCount >= 10) {
       const surplus = boss.hitCount - 10;
@@ -3914,8 +3932,7 @@ export default function App() {
                   playDamageSound();
                   
                   if (p.hull <= 0) {
-                    addGainNotification(`💀 ${p.name} ZNIČEN RADIACÍ!`, '#ef4444');
-                    triggerShipCatastrophicFailure();
+                    handlePlayerDeath(p, 'zničen radiací v bouři');
                   }
                 }
               }
@@ -4011,8 +4028,9 @@ export default function App() {
           });
         }
 
-        // Boss self-healing logic: heals itself after being shot, no matter how we shoot it!
-        if (boss.hp < boss.maxHp) {
+        // Boss self-healing logic: heals itself if not damaged for 3.5 seconds!
+        const timeSinceLastDamage = Date.now() - (boss.lastDamageTime || 0);
+        if (boss.hp < boss.maxHp && timeSinceLastDamage > 3500) {
           const currentLives = boss.lives ?? 6;
           // Heal rate increases as boss lives decrease!
           const healAmountPerSec = 250 + (6 - currentLives) * 180;
@@ -4435,9 +4453,7 @@ export default function App() {
               addGainNotification(`💥 ${p.name} - TRUP POŠKOZEN KORZÁREM! (-${pirateDmgHull} HP)`, '#ef4444');
               addCombatLogMessage(`🚨 ${p.name}: Korzár laser zasáhl trup -${pirateDmgHull}`, '#ef4444');
               if (p.hull <= 0) {
-                addGainNotification(`💀 ${p.name} ZNIČEN PIRÁTY!`, '#ef4444');
-                addCombatLogMessage(`💀 Hlášení: ${p.name} byl zničen korzáry!`, '#ef4444');
-                triggerShipCatastrophicFailure();
+                handlePlayerDeath(p, 'zničen korzáry');
               }
             }
             playDamageSound();
@@ -4628,7 +4644,7 @@ export default function App() {
               p.lastHullHitTime = Date.now();
               addGainNotification(`🚨 ${p.name} - LÁVA POŠKODILA TRUP! (-${lp.damage} HP)`, '#ef4444');
               if (p.hull <= 0) {
-                triggerShipCatastrophicFailure();
+                handlePlayerDeath(p, 'roztaven lávou');
               }
             }
             playDamageSound();
@@ -4933,7 +4949,7 @@ export default function App() {
             triggerCameraShake(8);
 
             if (p.hull <= 0) {
-              triggerShipCatastrophicFailure();
+              handlePlayerDeath(p, 'zničen naváděnou ohnivou koulí generála');
             }
           }
         }
@@ -4972,7 +4988,7 @@ export default function App() {
               p.lastHullHitTime = Date.now();
               addGainNotification(`🔥 TRUP PÁLÍ LÁVOVÁ STOPA! (-1 HP)`, '#ef4444');
               if (p.hull <= 0) {
-                triggerShipCatastrophicFailure();
+                handlePlayerDeath(p, 'roztaven žhnoucí lávovou stopou');
               }
             }
           }
@@ -5024,7 +5040,7 @@ export default function App() {
               p.lastHullHitTime = Date.now();
               addGainNotification(`🚨 ${p.name} - MRAZIVÝ PULS ZMRZIL TRUP! (-${fp.damage} HP)`, '#0284c7');
               if (p.hull <= 0) {
-                triggerShipCatastrophicFailure();
+                handlePlayerDeath(p, 'zničen podchlazením z mrazivého pulsu');
               }
             }
             playDamageSound();
@@ -5175,6 +5191,7 @@ export default function App() {
         if (dist < boss.radius + tb.radius) {
           // Boss has high armor, take slightly reduced damage
           boss.hp -= tb.damage * 0.45;
+          boss.lastDamageTime = Date.now();
         }
       }
     });
@@ -6224,10 +6241,10 @@ export default function App() {
         const hitRad = laser.radius + boss.radius;
 
         if (distSq < hitRad * hitRad) {
-          let hitsMultiplier = 1 + ((upgradesRef.current.laserLevel || 1) - 1) * 1.5;
+          let hitsMultiplier = 1.5 + ((upgradesRef.current.laserLevel || 1) - 1) * 2.5;
           if (laser.color === '#fbbf24') {
             const carrierWeaponDmgLvl = upgradesRef.current.carrierWeaponDamageLevel || 1;
-            hitsMultiplier = 2.5 + (carrierWeaponDmgLvl - 1) * 2.0;
+            hitsMultiplier = 3.5 + (carrierWeaponDmgLvl - 1) * 3.5;
           }
           damageBossWithHitCount(laser.x, laser.y, hitsMultiplier);
           
@@ -6904,6 +6921,19 @@ export default function App() {
 
     // Finally delete from main list
     asteroidsRef.current = asteroidsRef.current.filter(a => a.id !== asteroid.id);
+  };
+
+  const handlePlayerDeath = (player: Player, cause: string) => {
+    player.hull = 0;
+    addGainNotification(`💀 ${player.name} byl ${cause}!`, '#ef4444');
+    addCombatLogMessage(`💀 Hlášení: ${player.name} byl ${cause}!`, '#ef4444');
+    const anyoneAlive = playersRef.current.some(pl => pl.hull > 0);
+    if (!anyoneAlive) {
+      addCombatLogMessage(`☠️ Hlášení: Všechny lodě byly zničeny!`, '#ef4444');
+      triggerShipCatastrophicFailure();
+    } else {
+      addGainNotification(`HLÁŠENÍ: ${player.name} zničen! Přibližte se k troskám na <90m pro oživení!`, '#ef4444');
+    }
   };
 
   const triggerShipCatastrophicFailure = () => {
