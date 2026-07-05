@@ -1556,7 +1556,7 @@ export default function App() {
   };
 
   // --- DAMAGE BOSS WITH HIT COUNT MECHANIC (Minecraft Style) ---
-  const damageBossWithHitCount = (hitX: number, hitY: number) => {
+  const damageBossWithHitCount = (hitX: number, hitY: number, customHitsToAdd: number = 1) => {
     if (!bossRef.current) return;
     const boss = bossRef.current;
     
@@ -1576,10 +1576,11 @@ export default function App() {
       });
     }
 
-    boss.hitCount = (boss.hitCount || 0) + 1;
+    boss.hitCount = (boss.hitCount || 0) + customHitsToAdd;
 
     if (boss.hitCount >= 10) {
-      boss.hitCount = 0;
+      const surplus = boss.hitCount - 10;
+      boss.hitCount = surplus >= 0 ? surplus : 0;
       // Take exactly 1mm of life! (1mm is ~6.6% or 1/15th of the health bar width of 180px)
       const dmg = boss.maxHp * 0.066;
       boss.hp -= dmg;
@@ -5671,7 +5672,8 @@ export default function App() {
           const dy = sock.y - boss.y;
           const dist = Math.hypot(dx, dy);
           if (dist < sock.radius + boss.radius) {
-            damageBossWithHitCount(sock.x, sock.y);
+            const sockHitsMultiplier = 3 + (upgradesRef.current.abilitySockLevel || 0) * 2;
+            damageBossWithHitCount(sock.x, sock.y, sockHitsMultiplier);
             triggerBurst = true;
           }
         }
@@ -5768,7 +5770,8 @@ export default function App() {
           if (dist < sock.cloudRadius) {
             // Count 10% of cloud DOT frames as armor hits
             if (Math.random() < 0.10) {
-              damageBossWithHitCount(boss.x + (Math.random() - 0.5) * 40, boss.y + (Math.random() - 0.5) * 40);
+              const cloudHitsMultiplier = 1 + (upgradesRef.current.abilitySockLevel || 0) * 0.5;
+              damageBossWithHitCount(boss.x + (Math.random() - 0.5) * 40, boss.y + (Math.random() - 0.5) * 40, cloudHitsMultiplier);
             }
             boss.vx *= 0.96;
             boss.vy *= 0.96;
@@ -6221,7 +6224,12 @@ export default function App() {
         const hitRad = laser.radius + boss.radius;
 
         if (distSq < hitRad * hitRad) {
-          damageBossWithHitCount(laser.x, laser.y);
+          let hitsMultiplier = 1 + ((upgradesRef.current.laserLevel || 1) - 1) * 1.5;
+          if (laser.color === '#fbbf24') {
+            const carrierWeaponDmgLvl = upgradesRef.current.carrierWeaponDamageLevel || 1;
+            hitsMultiplier = 2.5 + (carrierWeaponDmgLvl - 1) * 2.0;
+          }
+          damageBossWithHitCount(laser.x, laser.y, hitsMultiplier);
           
           if (!laser.isPiercing) {
             laser.lifetime = laser.maxLifetime; // destroy standard laser on impact
@@ -6486,6 +6494,19 @@ export default function App() {
 
     const combined = [...astTargets, ...pirateTargets];
 
+    if (isBossFightActiveRef.current && bossRef.current) {
+      const boss = bossRef.current;
+      combined.push({
+        id: 'boss',
+        x: boss.x,
+        y: boss.y,
+        hp: boss.hp,
+        color: '#f43f5e',
+        isPirate: true,
+        ref: boss
+      });
+    }
+
     let candidates = combined.map(t => {
       const dx = t.x - p.x;
       const dy = t.y - p.y;
@@ -6522,7 +6543,14 @@ export default function App() {
       hitIds.push(target.id);
 
       // Hit target
-      target.ref.hp -= dmg;
+      if (target.id === 'boss') {
+        const hitsCount = 5 + lvl * 4; // Lvl 1: 9 hits, Lvl 2: 13 hits, Lvl 3: 17 hits
+        damageBossWithHitCount(target.x + (Math.random() - 0.5) * 40, target.y + (Math.random() - 0.5) * 40, hitsCount);
+        target.ref.hp -= (dmg * 1.5); // lightning deals massive direct damage to boss too!
+        addCombatLogMessage(`⚡ BLESK: Zasažen hlavní korzár! Ochranný štít absorboval ${hitsCount} zásahů!`, '#facc15');
+      } else {
+        target.ref.hp -= dmg;
+      }
 
       // Draw beautiful electrical lightning sparks along the path
       const sx = sourceX;
@@ -9167,6 +9195,55 @@ export default function App() {
       });
 
       ctx.restore(); // Restore context origin shift
+
+      // --- BOSS SPECIAL ATTACK PREPARATION WARNING VIGNETTE ---
+      if (isBossFightActiveRef.current && bossRef.current && bossRef.current.state !== 'intro') {
+        const boss = bossRef.current;
+        const timeSinceLastValuable = Date.now() - (boss.lastValuableMove || 0);
+        // Warning triggers 2.5 seconds before the attack
+        if (timeSinceLastValuable > 9500 && timeSinceLastValuable <= 12000) {
+          const timeLeftSec = ((12000 - timeSinceLastValuable) / 1000).toFixed(1);
+          const progress = (timeSinceLastValuable - 9500) / 2500; // 0 to 1
+          
+          // Flash effect: pulse frequency increases as we get closer to trigger
+          const pulseFrequency = 5 + progress * 20; // 5Hz to 25Hz
+          const flashIntensity = 0.35 + 0.35 * Math.sin((Date.now() / 1000) * pulseFrequency * Math.PI * 2);
+          const alpha = flashIntensity * progress; // grows stronger as trigger approaches
+
+          ctx.save();
+          // Draw a radial gradient centered in the viewport
+          const grad = ctx.createRadialGradient(
+            vx + vw / 2, vy + vh / 2, Math.min(vw, vh) * 0.2, // inner circle
+            vx + vw / 2, vy + vh / 2, Math.max(vw, vh) * 0.7  // outer circle
+          );
+          // Red glowing vignette edges
+          grad.addColorStop(0, 'rgba(239, 68, 68, 0)');
+          grad.addColorStop(0.5, `rgba(239, 68, 68, ${alpha * 0.18})`);
+          grad.addColorStop(1, `rgba(220, 38, 38, ${alpha * 0.75})`);
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(vx, vy, vw, vh);
+
+          // Draw neon warning line along the viewport edges
+          ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
+          ctx.lineWidth = 4 + 3 * Math.sin(Date.now() / 100 * (5 + progress * 10));
+          ctx.strokeRect(vx + 2, vy + 2, vw - 4, vh - 4);
+
+          // Menacing alert text centered at the top of the viewport
+          ctx.font = '900 14px monospace';
+          ctx.fillStyle = '#f87171';
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 3;
+          ctx.textAlign = 'center';
+          
+          const warningMsg = `⚠️ POZOR: KOSMICKÝ GEJZÍR ZA ${timeLeftSec}s ⚠️`;
+          ctx.strokeText(warningMsg, vx + vw / 2, vy + 45);
+          ctx.fillText(warningMsg, vx + vw / 2, vy + 45);
+
+          ctx.restore();
+        }
+      }
+
       ctx.restore(); // Restore master clip
     };
 
