@@ -361,5 +361,17 @@ export interface Boss {
   maxLives?: number;
   healVisualTimer?: number;
   hitCount?: number;
+  lastDamageTime?: number;
+}
+
+export interface ArenaPlatform {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  hp: number;
+  maxHp: number;
+  color: string;
 }
 

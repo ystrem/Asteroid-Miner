@@ -32,7 +32,8 @@ import {
   BossFreezingPulse,
   BossEscortDrone,
   FireTrail,
-  PlayerTrailBubble
+  PlayerTrailBubble,
+  ArenaPlatform
 } from './types';
 import { 
   playLaserSound, 
@@ -421,6 +422,7 @@ export default function App() {
 
   const piratesRef = useRef<Pirate[]>([]);
   const pirateLasersRef = useRef<PirateLaser[]>([]);
+  const arenaPlatformsRef = useRef<ArenaPlatform[]>([]);
   const lastGamepadButtonsRef = useRef<{ [key: string]: boolean }>({});
   const keyboardOrMousePressedRef = useRef<boolean>(false);
   const gamepadOnlyStartRef = useRef<number | null>(null);
@@ -1501,6 +1503,7 @@ export default function App() {
     particlesRef.current = [];
     piratesRef.current = [];
     pirateLasersRef.current = [];
+    arenaPlatformsRef.current = [];
     setSolarStormActive(false);
     solarStormActiveRef.current = false;
     solarStormTimeRef.current = 1500;
@@ -1509,6 +1512,17 @@ export default function App() {
     if (startBossFight) {
       isBossFightActiveRef.current = true;
       setIsBossFightActive(true);
+
+      // Spawn 2D Destructible Arena Platforms
+      arenaPlatformsRef.current = [
+        { id: 'plat-1', x: -250, y: -100, width: 140, height: 25, hp: 150, maxHp: 150, color: '#10b981' },
+        { id: 'plat-2', x: 250, y: -100, width: 140, height: 25, hp: 150, maxHp: 150, color: '#10b981' },
+        { id: 'plat-3', x: -380, y: -300, width: 120, height: 25, hp: 120, maxHp: 120, color: '#10b981' },
+        { id: 'plat-4', x: 380, y: -300, width: 120, height: 25, hp: 120, maxHp: 120, color: '#10b981' },
+        { id: 'plat-5', x: 0, y: -450, width: 180, height: 25, hp: 200, maxHp: 200, color: '#06b6d4' },
+        { id: 'plat-6', x: -160, y: -600, width: 100, height: 20, hp: 100, maxHp: 100, color: '#10b981' },
+        { id: 'plat-7', x: 160, y: -600, width: 100, height: 20, hp: 100, maxHp: 100, color: '#10b981' },
+      ];
       
       // Open Upgrade Shop right as we start the boss fight so they can buy!
       setIsShopOpen(true);
@@ -1866,6 +1880,7 @@ export default function App() {
     bossGuidedFireballsRef.current = [];
     bossFreezingPulsesRef.current = [];
     bossEscortDronesRef.current = [];
+    arenaPlatformsRef.current = [];
     emStormTimerRef.current = 0;
     emStormActiveRef.current = false;
 
@@ -1874,6 +1889,18 @@ export default function App() {
     if (targetSector.bossId) {
       isBossFightActiveRef.current = true;
       setIsBossFightActive(true);
+
+      // Spawn 2D Destructible Arena Platforms
+      arenaPlatformsRef.current = [
+        { id: 'plat-1', x: -250, y: -100, width: 140, height: 25, hp: 150, maxHp: 150, color: '#10b981' },
+        { id: 'plat-2', x: 250, y: -100, width: 140, height: 25, hp: 150, maxHp: 150, color: '#10b981' },
+        { id: 'plat-3', x: -380, y: -300, width: 120, height: 25, hp: 120, maxHp: 120, color: '#10b981' },
+        { id: 'plat-4', x: 380, y: -300, width: 120, height: 25, hp: 120, maxHp: 120, color: '#10b981' },
+        { id: 'plat-5', x: 0, y: -450, width: 180, height: 25, hp: 200, maxHp: 200, color: '#06b6d4' },
+        { id: 'plat-6', x: -160, y: -600, width: 100, height: 20, hp: 100, maxHp: 100, color: '#10b981' },
+        { id: 'plat-7', x: 160, y: -600, width: 100, height: 20, hp: 100, maxHp: 100, color: '#10b981' },
+      ];
+
       setBossHp(1000);
       setBossMaxHp(1000);
       setBossLives(6);
@@ -3669,6 +3696,82 @@ export default function App() {
           p.y += p.vy;
         }
 
+        // --- PLATFORM COLLISION PHYSICS ---
+        if (isBossFightActiveRef.current && arenaPlatformsRef.current.length > 0) {
+          arenaPlatformsRef.current.forEach(plat => {
+            const halfW = plat.width / 2;
+            const halfH = plat.height / 2;
+            
+            // Find closest point on platform rectangle to player center
+            const closestX = Math.max(plat.x - halfW, Math.min(p.x, plat.x + halfW));
+            const closestY = Math.max(plat.y - halfH, Math.min(p.y, plat.y + halfH));
+            
+            const dx = p.x - closestX;
+            const dy = p.y - closestY;
+            const distance = Math.hypot(dx, dy);
+            
+            if (distance < p.radius) {
+              // Push out of platform
+              if (distance === 0) {
+                p.y -= p.radius;
+                p.vy = -Math.abs(p.vy) * 0.3;
+              } else {
+                const overlap = p.radius - distance;
+                const pushX = (dx / distance) * overlap;
+                const pushY = (dy / distance) * overlap;
+                
+                p.x += pushX;
+                p.y += pushY;
+                
+                // Slide/Bounce response
+                const isHorizontalHit = Math.abs(dx) > Math.abs(dy);
+                if (isHorizontalHit) {
+                  p.vx = -p.vx * 0.35;
+                } else {
+                  p.vy = -p.vy * 0.35;
+                }
+              }
+            }
+          });
+        }
+
+        // Keep players inside 2D Boss Arena (radius 1000 around center (0, -200))
+        if (isBossFightActiveRef.current) {
+          const arenaCenterX = 0;
+          const arenaCenterY = -200;
+          const arenaRadius = 1000;
+          const dx = p.x - arenaCenterX;
+          const dy = p.y - arenaCenterY;
+          const dist = Math.hypot(dx, dy);
+          if (dist > arenaRadius) {
+            // Push player back with bounce
+            const angle = Math.atan2(dy, dx);
+            p.x = arenaCenterX + Math.cos(angle) * arenaRadius;
+            p.y = arenaCenterY + Math.sin(angle) * arenaRadius;
+            // Reverse velocity and lose energy
+            p.vx = -Math.cos(angle) * Math.abs(p.vx) * 0.4;
+            p.vy = -Math.sin(angle) * Math.abs(p.vy) * 0.4;
+            // Spawn some electrical arena sparks!
+            for (let i = 0; i < 6; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x,
+                y: p.y,
+                vx: (Math.random() - 0.5) * 5 - Math.cos(angle) * 3,
+                vy: (Math.random() - 0.5) * 5 - Math.sin(angle) * 3,
+                color: '#22d3ee',
+                size: Math.random() * 3.5 + 1.5,
+                alpha: 1.0,
+                lifetime: 0,
+                maxLifetime: 20
+              });
+            }
+            if (Math.random() < 0.05) {
+              addCombatLogMessage("⚡ SILOVÁ BARIÉRA: Pokus o opuštění bojové arény odražen!", "#22d3ee");
+            }
+          }
+        }
+
         if (p.invulnerableTime > 0) {
           p.invulnerableTime--;
         }
@@ -3712,8 +3815,9 @@ export default function App() {
     // --- DYNAMIC REVIVAL LOGIC ---
     playersRef.current.forEach(deadPlayer => {
       if (deadPlayer.hull <= 0) {
-        // Find nearest living helper player
+        // Find nearest living helper player and check if they are holding action
         let helperNear = false;
+        let actionHeld = false;
         playersRef.current.forEach(livingHero => {
           if (livingHero.hull > 0) {
             const dx = deadPlayer.x - livingHero.x;
@@ -3721,16 +3825,48 @@ export default function App() {
             const dist = Math.hypot(dx, dy);
             if (dist < 90) {
               helperNear = true;
+              
+              // Read key controls based on helper's input source
+              let isHolding = false;
+              if (livingHero.inputSource === 'keyboard_p1') {
+                isHolding = !!(keysPressed.current['ControlLeft'] || keysPressed.current['KeyF'] || keysPressed.current['Space']);
+              } else if (livingHero.inputSource === 'keyboard_p2') {
+                isHolding = !!(keysPressed.current['ControlRight'] || keysPressed.current['Space']);
+              } else {
+                // Gamepad fallback or general any-key fallback
+                isHolding = !!(keysPressed.current['Space'] || keysPressed.current['MouseDown']);
+              }
+
+              if (isHolding) {
+                actionHeld = true;
+                
+                // Spawn high-five action transfer sparks
+                if (Math.random() < 0.28) {
+                  particlesRef.current.push({
+                    id: Math.random().toString(36).substring(2, 9),
+                    x: livingHero.x,
+                    y: livingHero.y,
+                    vx: (deadPlayer.x - livingHero.x) * 0.12 + (Math.random() - 0.5) * 3,
+                    vy: (deadPlayer.y - livingHero.y) * 0.12 + (Math.random() - 0.5) * 3,
+                    color: '#10b981', // healing green energy
+                    size: Math.random() * 3.5 + 1.5,
+                    alpha: 1.0,
+                    lifetime: 0,
+                    maxLifetime: 22
+                  });
+                }
+              }
             }
           }
         });
 
-        if (helperNear) {
-          deadPlayer.reviveTimer += 1.0;
+        if (helperNear && actionHeld) {
+          deadPlayer.reviveTimer += 1.0; // charge up!
+          
           if (deadPlayer.reviveTimer >= 150) { // 2.5s at 60fps
             const hpRestoreVal = Math.round(deadPlayer.maxHull * 0.4);
             deadPlayer.hull = hpRestoreVal;
-            deadPlayer.invulnerableTime = 120;
+            deadPlayer.invulnerableTime = 120; // 2 seconds invulnerable
             deadPlayer.reviveTimer = 0;
             deadPlayer.vx = 0;
             deadPlayer.vy = 0;
@@ -3746,7 +3882,7 @@ export default function App() {
                 y: deadPlayer.y,
                 vx: Math.cos(angle) * (Math.random() * 4 + 3.2),
                 vy: Math.sin(angle) * (Math.random() * 4 + 3.2),
-                color: deadPlayer.color,
+                color: '#10b981',
                 size: Math.random() * 4.5 + 2.5,
                 alpha: 1.0,
                 lifetime: 0,
@@ -3755,7 +3891,8 @@ export default function App() {
             }
           }
         } else {
-          deadPlayer.reviveTimer = Math.max(0, deadPlayer.reviveTimer - 1.5);
+          // Decay progress if helper is not around or let go of action
+          deadPlayer.reviveTimer = Math.max(0, deadPlayer.reviveTimer - 0.75);
         }
       }
     });
@@ -4008,6 +4145,37 @@ export default function App() {
         // Boss Active movement: hover left and right and bounce subtly
         boss.x += Math.sin(Date.now() / 2500) * 1.5;
         boss.y += Math.cos(Date.now() / 1500) * 0.5;
+
+        // Boss direct crushing collision with platforms
+        if (arenaPlatformsRef.current.length > 0) {
+          arenaPlatformsRef.current.forEach(plat => {
+            const halfW = plat.width / 2;
+            const halfH = plat.height / 2;
+            
+            const closestX = Math.max(plat.x - halfW, Math.min(boss.x, plat.x + halfW));
+            const closestY = Math.max(plat.y - halfH, Math.min(boss.y, plat.y + halfH));
+            const distance = Math.hypot(boss.x - closestX, boss.y - closestY);
+            
+            if (distance < boss.radius) {
+              plat.hp -= 1.8; // Melt structure on direct physical contact with giant boss
+              
+              if (Math.random() < 0.25) {
+                particlesRef.current.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  x: closestX,
+                  y: closestY,
+                  vx: (Math.random() - 0.5) * 5,
+                  vy: (Math.random() - 0.5) * 5,
+                  color: plat.color,
+                  size: Math.random() * 3 + 1,
+                  alpha: 1,
+                  lifetime: 0,
+                  maxLifetime: 20
+                });
+              }
+            }
+          });
+        }
 
         // Minecraft style burning particles rising from the boss (on fire like in Minecraft!)
         if (Math.random() < 0.40) {
@@ -4405,6 +4573,38 @@ export default function App() {
       pl.x += pl.vx;
       pl.y += pl.vy;
       pl.lifetime++;
+
+      // Check collision with arena platforms
+      if (isBossFightActiveRef.current && arenaPlatformsRef.current.length > 0 && pl.lifetime < pl.maxLifetime) {
+        arenaPlatformsRef.current.forEach(plat => {
+          const halfW = plat.width / 2;
+          const halfH = plat.height / 2;
+          if (
+            pl.x >= plat.x - halfW &&
+            pl.x <= plat.x + halfW &&
+            pl.y >= plat.y - halfH &&
+            pl.y <= plat.y + halfH
+          ) {
+            pl.lifetime = pl.maxLifetime; // absorb/destroy laser
+
+            // Spawn platform-colored sparks
+            for (let i = 0; i < 4; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: pl.x,
+                y: pl.y,
+                vx: (Math.random() - 0.5) * 4,
+                vy: (Math.random() - 0.5) * 4,
+                color: plat.color,
+                size: Math.random() * 2 + 1,
+                alpha: 1,
+                lifetime: 0,
+                maxLifetime: 15
+              });
+            }
+          }
+        });
+      }
       
       // Check collision with player ships!
       playersRef.current.forEach(p => {
@@ -4933,6 +5133,52 @@ export default function App() {
         });
       }
 
+      // Collision check with Arena Platforms
+      if (isBossFightActiveRef.current && arenaPlatformsRef.current.length > 0 && bf.lifetime < bf.maxLifetime) {
+        arenaPlatformsRef.current.forEach(plat => {
+          const halfW = plat.width / 2;
+          const halfH = plat.height / 2;
+          
+          const closestX = Math.max(plat.x - halfW, Math.min(bf.x, plat.x + halfW));
+          const closestY = Math.max(plat.y - halfH, Math.min(bf.y, plat.y + halfH));
+          const distance = Math.hypot(bf.x - closestX, bf.y - closestY);
+          
+          if (distance < bf.radius) {
+            bf.lifetime = bf.maxLifetime; // destroy fireball
+            
+            // Apply damage to platform
+            plat.hp -= bf.damage * 1.5; // Fireball deals massive damage to structure
+            
+            // Trigger explosion sparks and sounds
+            playExplosionSound('medium');
+            triggerCameraShake(4);
+            
+            // Blast particles from the platform material
+            for (let i = 0; i < 15; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: closestX,
+                y: closestY,
+                vx: (Math.random() - 0.5) * 8,
+                vy: (Math.random() - 0.5) * 8,
+                color: plat.color,
+                size: Math.random() * 4 + 2,
+                alpha: 1,
+                lifetime: 0,
+                maxLifetime: 25
+              });
+            }
+
+            if (plat.hp <= 0) {
+              addCombatLogMessage(`💥 ARÉNA: Plošina byla úplně rozmetána střelbou bosse!`, '#ef4444');
+              playExplosionSound('large');
+            } else {
+              addCombatLogMessage(`⚡ ARÉNA: Plošina absorbovala zásah ohňové koule! Integrity: ${Math.round((plat.hp / plat.maxHp) * 100)}%`, plat.color);
+            }
+          }
+        });
+      }
+
       // Collision checks with players
       playersRef.current.forEach(p => {
         if (p.hull > 0 && p.invulnerableTime <= 0) {
@@ -4955,6 +5201,10 @@ export default function App() {
         }
       });
     });
+    // Clean up destroyed platforms
+    if (isBossFightActiveRef.current) {
+      arenaPlatformsRef.current = arenaPlatformsRef.current.filter(plat => plat.hp > 0);
+    }
     bossGuidedFireballsRef.current = bossGuidedFireballsRef.current.filter(bf => bf.lifetime < bf.maxLifetime);
 
     // Update Fire Trails (Damaging lingering flames)
@@ -5625,6 +5875,40 @@ export default function App() {
         }
       });
     });
+
+    // Check laser hit arena platform
+    if (isBossFightActiveRef.current && arenaPlatformsRef.current.length > 0) {
+      lasersRef.current.forEach(laser => {
+        if (laser.lifetime >= laser.maxLifetime) return;
+        arenaPlatformsRef.current.forEach(plat => {
+          const halfW = plat.width / 2;
+          const halfH = plat.height / 2;
+          if (
+            laser.x >= plat.x - halfW &&
+            laser.x <= plat.x + halfW &&
+            laser.y >= plat.y - halfH &&
+            laser.y <= plat.y + halfH
+          ) {
+            laser.lifetime = laser.maxLifetime; // absorb laser
+            // Spawn spark particles of platform color
+            for (let i = 0; i < 4; i++) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: laser.x,
+                y: laser.y,
+                vx: (Math.random() - 0.5) * 4,
+                vy: (Math.random() - 0.5) * 4,
+                color: plat.color,
+                size: Math.random() * 2 + 1,
+                alpha: 1,
+                lifetime: 0,
+                maxLifetime: 15
+              });
+            }
+          }
+        });
+      });
+    }
 
     lasersRef.current = lasersRef.current.filter(l => l.lifetime < l.maxLifetime);
 
@@ -7205,6 +7489,222 @@ export default function App() {
       ctx.save();
       ctx.translate(vx, vy);
 
+      // --- DRAW 2D GLADIATORIAL COMBAT ARENA (Grid, Borders & Spotlights) ---
+      if (isBossFightActiveRef.current) {
+        const arenaCenterX = 0;
+        const arenaCenterY = -200;
+        const arenaRadius = 1000;
+
+        // Draw cyber-arena grid floor inside the circular boundary
+        ctx.save();
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.08)'; // cyan grid lines
+        ctx.lineWidth = 1;
+        
+        const gridSize = 80;
+        const startGridX = Math.floor((camX - arenaRadius) / gridSize) * gridSize;
+        const endGridX = Math.ceil((camX + vw + arenaRadius) / gridSize) * gridSize;
+        const startGridY = Math.floor((camY - arenaRadius) / gridSize) * gridSize;
+        const endGridY = Math.ceil((camY + vh + arenaRadius) / gridSize) * gridSize;
+
+        // Clip grid to stay inside circular arena
+        ctx.beginPath();
+        ctx.arc(arenaCenterX - camX, arenaCenterY - camY, arenaRadius, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Draw vertical grid lines
+        for (let gx = startGridX; gx <= endGridX; gx += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(gx - camX, startGridY - camY);
+          ctx.lineTo(gx - camX, endGridY - camY);
+          ctx.stroke();
+        }
+        // Draw horizontal grid lines
+        for (let gy = startGridY; gy <= endGridY; gy += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(startGridX - camX, gy - camY);
+          ctx.lineTo(endGridX - camX, gy - camY);
+          ctx.stroke();
+        }
+
+        // Draw cool glowing floor patterns
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.12)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(arenaCenterX - camX, arenaCenterY - camY, arenaRadius * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(arenaCenterX - camX, arenaCenterY - camY, 150, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Crossed hazard lines in the center of arena
+        ctx.beginPath();
+        ctx.moveTo(arenaCenterX - camX - 100, arenaCenterY - camY - 100);
+        ctx.lineTo(arenaCenterX - camX + 100, arenaCenterY - camY + 100);
+        ctx.moveTo(arenaCenterX - camX + 100, arenaCenterY - camY - 100);
+        ctx.lineTo(arenaCenterX - camX - 100, arenaCenterY - camY + 100);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Draw Arena Boundary Ring (Pulsing Neon Barrier)
+        ctx.save();
+        const pulse = 1.0 + Math.sin(Date.now() / 250) * 0.03;
+        const rCurrent = arenaRadius * pulse;
+        
+        // Inner glowing fill rim
+        ctx.strokeStyle = '#ef4444'; // Neon red danger barrier
+        ctx.shadowColor = '#f43f5e';
+        ctx.shadowBlur = 15;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(arenaCenterX - camX, arenaCenterY - camY, arenaRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Outer warning rings
+        ctx.strokeStyle = '#facc15'; // Yellow caution rim
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 0;
+        ctx.setLineDash([15, 15]);
+        ctx.beginPath();
+        ctx.arc(arenaCenterX - camX, arenaCenterY - camY, arenaRadius + 15, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // Draw stadium/arena style spotlights sweeping the field
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        const sweepSpeed = Date.now() / 1500;
+        const lightsCount = 4;
+        for (let i = 0; i < lightsCount; i++) {
+          const angle = sweepSpeed + (i * Math.PI / 2);
+          const beamLength = 800;
+          
+          const lx = arenaCenterX + Math.cos(angle + Math.sin(sweepSpeed) * 0.4) * 900 - camX;
+          const ly = arenaCenterY + Math.sin(angle + Math.sin(sweepSpeed) * 0.4) * 900 - camY;
+
+          // Spotlight source
+          ctx.fillStyle = '#22d3ee';
+          ctx.beginPath();
+          ctx.arc(lx, ly, 12, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Spotlight cone pointing to center
+          const targetAngle = Math.atan2((arenaCenterY - camY) - ly, (arenaCenterX - camX) - lx);
+          const coneGrad = ctx.createRadialGradient(lx, ly, 0, lx, ly, beamLength);
+          coneGrad.addColorStop(0, 'rgba(34, 211, 238, 0.25)');
+          coneGrad.addColorStop(0.3, 'rgba(34, 211, 238, 0.10)');
+          coneGrad.addColorStop(1, 'rgba(34, 211, 238, 0)');
+          
+          ctx.fillStyle = coneGrad;
+          ctx.beginPath();
+          ctx.moveTo(lx, ly);
+          ctx.arc(lx, ly, beamLength, targetAngle - 0.15, targetAngle + 0.15);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // --- DRAW 2D DESTRUCTIBLE ARENA PLATFORMS ---
+        arenaPlatformsRef.current.forEach(plat => {
+          const px = plat.x - camX;
+          const py = plat.y - camY;
+          const halfW = plat.width / 2;
+          const halfH = plat.height / 2;
+
+          ctx.save();
+          
+          // Determine glow color by health percentage
+          const hpRatio = Math.max(0, plat.hp / plat.maxHp);
+          const glowColor = hpRatio > 0.6 ? '#10b981' : (hpRatio > 0.3 ? '#f59e0b' : '#ef4444');
+          
+          ctx.shadowBlur = 14;
+          ctx.shadowColor = glowColor;
+          
+          // Draw metallic base plate
+          ctx.fillStyle = '#1e293b';
+          ctx.strokeStyle = glowColor;
+          ctx.lineWidth = 2.5;
+          
+          ctx.beginPath();
+          // Fallback rect if roundRect is not supported
+          if ((ctx as any).roundRect) {
+            (ctx as any).roundRect(px - halfW, py - halfH, plat.width, plat.height, 4);
+          } else {
+            ctx.rect(px - halfW, py - halfH, plat.width, plat.height);
+          }
+          ctx.fill();
+          ctx.stroke();
+          
+          // Draw subtle high-tech circuit lines inside the plate
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.lineWidth = 1;
+          for (let tx = -halfW + 15; tx < halfW; tx += 15) {
+            ctx.beginPath();
+            ctx.moveTo(px + tx, py - halfH);
+            ctx.lineTo(px + tx, py + halfH);
+            ctx.stroke();
+          }
+
+          // Draw neon accent line along the bottom
+          ctx.strokeStyle = glowColor;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(px - halfW + 6, py + halfH - 3);
+          ctx.lineTo(px + halfW - 6, py + halfH - 3);
+          ctx.stroke();
+
+          // DRAW DAMAGE CRACKS AND DEBRIS (as platform crumbles)
+          if (hpRatio < 1.0) {
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 1.5;
+            ctx.shadowBlur = 0; // disable shadow for jagged cracks
+            
+            // Seed crack locations deterministically based on platform ID string
+            const seed = plat.id === 'plat-1' ? 0.35 : (plat.id === 'plat-2' ? 0.72 : 0.48);
+            const crackCount = Math.floor((1 - hpRatio) * 6) + 1;
+            
+            for (let i = 0; i < crackCount; i++) {
+              const xStart = px - halfW + ((seed * 23 + i * 17) % 1) * plat.width;
+              const yStart = py - halfH;
+              const xEnd = xStart + ((seed * 7 + i * 29) % 0.5 - 0.25) * 35;
+              const yEnd = py + halfH;
+              
+              ctx.beginPath();
+              ctx.moveTo(xStart, yStart);
+              const xMid = (xStart + xEnd) / 2 + (Math.sin(i + Date.now() / 150) * 3);
+              ctx.lineTo(xMid, py);
+              ctx.lineTo(xEnd, yEnd);
+              ctx.stroke();
+            }
+          }
+
+          // Emit dust/smoke particles if heavily damaged
+          if (hpRatio < 0.5 && Math.random() < 0.08) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: plat.x + (Math.random() - 0.5) * plat.width,
+              y: plat.y + (Math.random() - 0.5) * plat.height,
+              vx: (Math.random() - 0.5) * 1.2,
+              vy: -0.4 - Math.random() * 0.8,
+              color: '#64748b',
+              size: Math.random() * 2.5 + 1.2,
+              alpha: 0.5,
+              lifetime: 0,
+              maxLifetime: 40
+            });
+          }
+
+          // Draw floating durability indicator bar
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+          ctx.fillRect(px - 25, py - halfH - 12, 50, 4);
+          ctx.fillStyle = glowColor;
+          ctx.fillRect(px - 25, py - halfH - 12, 50 * hpRatio, 4);
+
+          ctx.restore();
+        });
+      }
+
       // --- B. PARTICLES RENDER ---
       particlesRef.current.forEach(p => {
         const sx = p.x - camX;
@@ -7991,56 +8491,146 @@ export default function App() {
         ctx.save();
         ctx.translate(bx, by);
 
-        // Core ship rotation facing angle (offset since ship points upward in default SVG/Canvas geometry)
-        ctx.rotate(boss.angle + Math.PI / 2);
+        // Core animation rates
+        const bob = Math.sin(Date.now() / 350) * 8;
+        const limbSwing = Math.sin(Date.now() / 180) * 12;
 
-        // Boss ship shadow glow
-        ctx.shadowBlur = 24;
+        // Shadow glow
+        ctx.shadowBlur = 25;
         ctx.shadowColor = '#ef4444';
 
-        // Outer Dark steel dreadnought hull
+        // --- 1. Draw Massive Hover Thrusters / Jet Pods ---
+        const flameLength = 35 + Math.abs(Math.sin(Date.now() / 80)) * 25;
+        const thrGrad = ctx.createLinearGradient(0, 30 + bob, 0, 30 + flameLength + bob);
+        thrGrad.addColorStop(0, '#f97316');
+        thrGrad.addColorStop(0.3, '#ef4444');
+        thrGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+        ctx.fillStyle = thrGrad;
+        
+        // Left thruster pod flame
+        ctx.fillRect(-45, 20 + bob, 16, flameLength);
+        // Right thruster pod flame
+        ctx.fillRect(29, 20 + bob, 16, flameLength);
+
+        // Metal thruster tubes
         ctx.fillStyle = '#1e293b';
         ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 3.5;
+        ctx.lineWidth = 3;
+        ctx.fillRect(-50, 10 + bob, 26, 15);
+        ctx.strokeRect(-50, 10 + bob, 26, 15);
+        ctx.fillRect(24, 10 + bob, 26, 15);
+        ctx.strokeRect(24, 10 + bob, 26, 15);
 
+        // --- 2. Draw Heavy Robotic Mech Arms / Cannons ---
+        ctx.save();
+        ctx.translate(-55, -10 + bob);
+        ctx.rotate(Math.PI / 12 + limbSwing * 0.01);
+        // Left arm frame
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(-20, -15, 25, 35);
+        ctx.strokeRect(-20, -15, 25, 35);
+        // Giant cannon barrel
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(-15, -45, 14, 30);
+        ctx.strokeRect(-15, -45, 14, 30);
+        // Laser emitter tip
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-13, -53, 10, 8);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(55, -10 + bob);
+        ctx.rotate(-Math.PI / 12 - limbSwing * 0.01);
+        // Right arm frame
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(-5, -15, 25, 35);
+        ctx.strokeRect(-5, -15, 25, 35);
+        // Giant cannon barrel
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(1, -45, 14, 30);
+        ctx.strokeRect(1, -45, 14, 30);
+        // Laser emitter tip
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(3, -53, 10, 8);
+        ctx.restore();
+
+        // --- 3. Draw Massive Steel Core Torso ---
+        ctx.fillStyle = '#1e293b';
         ctx.beginPath();
-        ctx.moveTo(0, -90); // Nose
-        ctx.lineTo(65, 50); // Right wing tip
-        ctx.lineTo(25, 40); // Inner center right
-        ctx.lineTo(-25, 40); // Inner center left
-        ctx.lineTo(-65, 50); // Left wing tip
+        // Heavy octagonal armored chest
+        ctx.moveTo(-45, 15 + bob);
+        ctx.lineTo(-50, -35 + bob);
+        ctx.lineTo(-25, -55 + bob);
+        ctx.lineTo(25, -55 + bob);
+        ctx.lineTo(50, -35 + bob);
+        ctx.lineTo(45, 15 + bob);
+        ctx.lineTo(0, 30 + bob);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
 
-        // Metallic panels styling
-        ctx.fillStyle = '#334155';
+        // Industrial hazard warning lines
+        ctx.strokeStyle = '#eab308';
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(0, -60);
-        ctx.lineTo(20, 10);
-        ctx.lineTo(-20, 10);
+        ctx.moveTo(-25, 5 + bob);
+        ctx.lineTo(-15, 15 + bob);
+        ctx.moveTo(-5, 5 + bob);
+        ctx.lineTo(5, 15 + bob);
+        ctx.moveTo(15, 5 + bob);
+        ctx.lineTo(25, 15 + bob);
+        ctx.stroke();
+
+        // Glowing Core Reactor Crystal
+        ctx.save();
+        const corePulse = 12 + Math.sin(Date.now() / 100) * 4;
+        ctx.fillStyle = '#ef4444';
+        ctx.shadowBlur = corePulse;
+        ctx.shadowColor = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, -10 + bob, 15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // --- 4. Draw Mechanical Head with Admiral General's Cap ---
+        // Metallic head
+        ctx.fillStyle = '#475569';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.5;
+        ctx.fillRect(-18, -80 + bob, 36, 25);
+        ctx.strokeRect(-18, -80 + bob, 36, 25);
+
+        // Glowing red horizontal visor eye
+        ctx.fillStyle = '#f43f5e';
+        ctx.fillRect(-12, -72 + bob, 24, 6);
+
+        // General's Admiral Cap
+        ctx.fillStyle = '#0f172a'; // dark navy/black cap crown
+        ctx.strokeStyle = '#facc15'; // golden cap lining
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-24, -80 + bob);
+        ctx.lineTo(-30, -90 + bob);
+        ctx.lineTo(30, -90 + bob);
+        ctx.lineTo(24, -80 + bob);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Cap peak visor
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(-20, -79 + bob, 40, 4);
+
+        // Golden crest/badge in center
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(0, -91 + bob);
+        ctx.lineTo(4, -85 + bob);
+        ctx.lineTo(-4, -85 + bob);
         ctx.closePath();
         ctx.fill();
 
-        // Glowing Core Crystal center window
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(0, -10, 16, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Engine afterburners flames pulsing
-        const flameLength = 20 + Math.random() * 18;
-        const fGrad = ctx.createLinearGradient(0, 45, 0, 45 + flameLength);
-        fGrad.addColorStop(0, '#f97316');
-        fGrad.addColorStop(0.5, '#ef4444');
-        fGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
-        ctx.fillStyle = fGrad;
-        ctx.fillRect(-45, 45, 12, flameLength);
-        ctx.fillRect(33, 45, 12, flameLength);
-
-        // Revert rotate to draw upright HP bar and title
-        ctx.rotate(-(boss.angle + Math.PI / 2));
-
+        // --- 5. HP HUD & Lives ---
         // Draw Boss HP HUD directly on canvas
         const barWidth = 180;
         const barHeight = 9;
@@ -8056,7 +8646,7 @@ export default function App() {
         ctx.lineWidth = 1.0;
         ctx.strokeRect(-barWidth / 2, -125, barWidth, barHeight);
 
-        // Draw Remaining Lives as glowing burning fire symbols! (On fire like in Minecraft!)
+        // Draw Remaining Lives as glowing burning fire symbols!
         const bLives = boss.lives ?? 6;
         const bMaxLives = boss.maxLives ?? 6;
         let heartsStr = "";
@@ -8069,9 +8659,8 @@ export default function App() {
         ctx.textAlign = 'center';
         ctx.shadowBlur = 5;
         ctx.shadowColor = '#000000';
-        ctx.fillText(`👑 GENERÁL KORZÁRŮ (${Math.round(hpRatio * 100)}%)`, 0, -137);
+        ctx.fillText(`🤖 CYBER-GOLIÁŠ KORZÁRŮ (${Math.round(hpRatio * 100)}%)`, 0, -137);
         
-        // Draw lives and regeneration stat underneath
         ctx.fillStyle = '#ff7849'; // fiery color
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         const healAmt = hpRatio < 1.0 ? 250 + (6 - bLives) * 180 : 0;
@@ -8125,6 +8714,189 @@ export default function App() {
 
         ctx.save();
         ctx.translate(sx, sy);
+
+        if (isBossFightActiveRef.current) {
+          // --- DRAW CUTE 2D ASTRONAUT CHARACTER ("PANÁČEK") ---
+          const isFlashing = p.invulnerableTime > 0 && Math.floor(p.invulnerableTime / 4) % 2 === 0;
+          if (isFlashing) {
+            ctx.globalAlpha = 0.35;
+          }
+
+          // Let's determine coordinates and movement wiggle
+          const isMoving = Math.hypot(p.vx, p.vy) > 0.4;
+          const walkCycle = isMoving ? Math.sin(Date.now() / 90) : 0;
+          const bounceY = isMoving ? Math.abs(Math.sin(Date.now() / 90)) * 3 : 0;
+
+          // Align figure to tilt slightly based on speed
+          const tilt = Math.max(-0.2, Math.min(0.2, p.vx * 0.04));
+          ctx.rotate(tilt);
+
+          // Shadow and base color
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = playerNum === 1 ? '#0ea5e9' : '#c084fc';
+
+          // Color palette
+          const suitColor = playerNum === 1 ? '#0284c7' : '#7e22ce'; // Main suit
+          const suitAccent = playerNum === 1 ? '#38bdf8' : '#e9d5ff'; // Accent chest armor
+          const visorColor = playerNum === 1 ? '#22d3ee' : '#ec4899'; // Glowing faceplate
+
+          // --- 1. Draw Jetpack on Back ---
+          ctx.fillStyle = '#475569';
+          ctx.strokeStyle = '#334155';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(-15, -12 - bounceY, 6, 20); // Jetpack body left side
+          
+          if (p.thrusting) {
+            // Emitting fire flames from the jetpack!
+            const fLength = 15 + Math.random() * 12;
+            const jetGrad = ctx.createLinearGradient(-12, 8 - bounceY, -12, 8 + fLength - bounceY);
+            jetGrad.addColorStop(0, '#f97316');
+            jetGrad.addColorStop(0.5, '#ef4444');
+            jetGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+            ctx.fillStyle = jetGrad;
+            ctx.fillRect(-14, 8 - bounceY, 4, fLength);
+            
+            // Jetpack fire particles
+            if (Math.random() < 0.3) {
+              particlesRef.current.push({
+                id: Math.random().toString(36).substring(2, 9),
+                x: p.x - Math.cos(p.angle) * 12 + (Math.random() - 0.5) * 6,
+                y: p.y - Math.sin(p.angle) * 12 + 10,
+                vx: -p.vx * 0.5 + (Math.random() - 0.5) * 1.5,
+                vy: 2.5 + Math.random() * 2,
+                color: playerNum === 1 ? '#38bdf8' : '#ec4899',
+                size: Math.random() * 3 + 1,
+                alpha: 0.8,
+                lifetime: 0,
+                maxLifetime: 25
+              });
+            }
+          }
+
+          // --- 2. Draw Legs (Wiggle walking animation) ---
+          ctx.fillStyle = suitColor;
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 1.5;
+
+          // Left Leg
+          ctx.save();
+          ctx.translate(-5, 10);
+          ctx.rotate(walkCycle * 0.4);
+          ctx.fillRect(-3, 0, 6, 8);
+          // boot foot
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-4, 6, 6, 3);
+          ctx.restore();
+
+          // Right Leg
+          ctx.save();
+          ctx.translate(5, 10);
+          ctx.rotate(-walkCycle * 0.4);
+          ctx.fillStyle = suitColor;
+          ctx.fillRect(-3, 0, 6, 8);
+          // boot foot
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-2, 6, 6, 3);
+          ctx.restore();
+
+          // --- 3. Draw Body (Egg/Round rect suit) ---
+          ctx.fillStyle = suitColor;
+          ctx.beginPath();
+          // Draw round suit body
+          ctx.arc(0, -2 - bounceY, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Chest armor plate
+          ctx.fillStyle = suitAccent;
+          ctx.beginPath();
+          ctx.arc(0, -1 - bounceY, 7, 0, Math.PI * 2);
+          ctx.fill();
+
+          // --- 4. Draw Helmet & Face Visor ---
+          ctx.fillStyle = '#e2e8f0'; // Helmet dome
+          ctx.beginPath();
+          ctx.arc(0, -14 - bounceY, 8.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Shiny reflective glass visor
+          ctx.fillStyle = visorColor;
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = visorColor;
+          ctx.beginPath();
+          // Face plate facing direction or forward
+          ctx.ellipse(2, -14 - bounceY, 6, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Visor sheen highlight
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+          ctx.beginPath();
+          ctx.ellipse(0, -15 - bounceY, 3, 1.5, Math.PI / 6, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Reset shadow
+          ctx.shadowBlur = 0;
+
+          // --- 5. Draw Hand Holding Arm / Blaster (points at weapon angle p.angle!) ---
+          ctx.save();
+          ctx.translate(3, -2 - bounceY);
+          ctx.rotate(p.angle); // Weapons face looking/aiming direction!
+
+          // Laser Gun Stock & Barrel
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(0, -3, 18, 5); // main frame
+          ctx.fillStyle = playerNum === 1 ? '#0ea5e9' : '#ec4899'; // weapon laser tube
+          ctx.fillRect(4, -2, 10, 3);
+          
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(18, -1.5);
+          ctx.lineTo(21, -1.5);
+          ctx.stroke();
+
+          // Small hand holding gun
+          ctx.fillStyle = suitColor;
+          ctx.beginPath();
+          ctx.arc(3, 0, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.restore();
+
+          // Restore canvas matrix
+          ctx.restore();
+          
+          // Draw Name Tag and Shield/Hull HUD over the character
+          ctx.save();
+          ctx.translate(sx, sy - bounceY);
+          ctx.fillStyle = playerNum === 1 ? '#38bdf8' : '#c084fc';
+          ctx.font = 'bold 9px "Space Grotesk", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`ASTRONAUT H${playerNum}`, 0, -30);
+
+          // Mini circular health / shield ring under the character
+          const hpRatio = Math.max(0, currentHull / 100); // normalized max hull
+          ctx.strokeStyle = 'rgba(15, 23, 42, 0.4)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, 16, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = playerNum === 1 ? '#38bdf8' : '#a855f7';
+          ctx.beginPath();
+          ctx.arc(0, 0, 16, -Math.PI / 2, -Math.PI / 2 + (currentShield / maxShieldVal) * Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = '#10b981'; // green hull ring inside
+          ctx.beginPath();
+          ctx.arc(0, 0, 13, -Math.PI / 2, -Math.PI / 2 + hpRatio * Math.PI * 2);
+          ctx.stroke();
+
+          ctx.restore();
+          return;
+        }
 
         if (superMagnetActiveRef.current > 0) {
           ctx.save();
@@ -8791,6 +9563,121 @@ export default function App() {
 
         ctx.save();
         ctx.translate(sx, sy);
+
+        if (isBossFightActiveRef.current) {
+          // --- DRAW KNEELING ASTRONAUT CHARACTER ---
+          ctx.rotate(0.2); // Slouched posture
+          ctx.globalAlpha = 0.75;
+
+          const suitColor = '#475569'; // greyed out
+          const visorColor = '#3f3f46'; // dark glass
+
+          // Kneeling folded legs on floor
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(-10, 4, 20, 6);
+
+          // Slouched torso body
+          ctx.fillStyle = suitColor;
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, -3, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Drooped helmet
+          ctx.fillStyle = '#94a3b8';
+          ctx.beginPath();
+          ctx.arc(-2, -12, 7.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Visor looking down
+          ctx.fillStyle = visorColor;
+          ctx.beginPath();
+          ctx.ellipse(-4, -12, 5, 3.5, -Math.PI / 8, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Sparks rising from the damaged suit
+          if (Math.random() < 0.15) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: p.x + (Math.random() - 0.5) * 10,
+              y: p.y + (Math.random() - 0.5) * 10,
+              vx: (Math.random() - 0.5) * 1,
+              vy: -1 - Math.random() * 1.5,
+              color: '#38bdf8',
+              size: Math.random() * 2 + 1,
+              alpha: 0.9,
+              lifetime: 0,
+              maxLifetime: 30
+            });
+          }
+
+          ctx.restore();
+
+          // Draw reviving indicator
+          ctx.save();
+          ctx.translate(sx, sy);
+          
+          const pulse = 1.0 + Math.sin(Date.now() * 0.009) * 0.15;
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.radius * 1.5 * pulse, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = '#ef4444';
+          ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('S.O.S.', 0, -p.radius - 12);
+
+          // Detect nearest living player
+          let isHelperNear = false;
+          playersRef.current.forEach(pl => {
+            if (pl.hull > 0 && pl.id !== p.id) {
+              const dist = Math.hypot(p.x - pl.x, p.y - pl.y);
+              if (dist < 90) {
+                isHelperNear = true;
+              }
+            }
+          });
+
+          if (isHelperNear) {
+            ctx.fillStyle = '#fbbf24'; // Warning yellow
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('👉 DRŽ MEZERNÍK / SPACE PRO HIGH-FIVE', 0, p.radius + 18);
+          } else {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('PŘILEŤ PRO OŽIVENÍ', 0, p.radius + 18);
+          }
+
+          if (reviveProgress > 0) {
+            ctx.save();
+            ctx.fillStyle = '#10b981';
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`⚡ OŽIVOVÁNÍ (${Math.round((reviveProgress / 150) * 100)}%)`, 0, -25);
+            ctx.restore();
+            
+            ctx.strokeStyle = '#22c55e';
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius + 8, -Math.PI / 2, -Math.PI / 2 + (reviveProgress / 150) * Math.PI * 2);
+            ctx.stroke();
+
+            ctx.fillStyle = '#22c55e';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${Math.round((reviveProgress / 150) * 100)}%`, 0, -p.radius - 24);
+          }
+          ctx.restore();
+          return;
+        }
+
         ctx.rotate(p.angle);
 
         ctx.globalAlpha = 0.45;
