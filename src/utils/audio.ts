@@ -400,3 +400,127 @@ export function playShieldDownSound() {
     console.warn("AudioContext shield down sfx failed:", e);
   }
 }
+
+export function playMapChangeSound() {
+  if (!isSoundEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Resonant wide warp jump sweep sound
+    const osc = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc.type = 'sawtooth';
+    osc2.type = 'sine';
+
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.45);
+
+    osc2.frequency.setValueAtTime(300, now);
+    osc2.frequency.exponentialRampToValueAtTime(1800, now + 0.45);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(300, now);
+    filter.frequency.exponentialRampToValueAtTime(3500, now + 0.45);
+
+    gainNode.gain.setValueAtTime(0.001, now);
+    gainNode.gain.linearRampToValueAtTime(0.18, now + 0.15);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+
+    osc.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    osc.start(now);
+    osc2.start(now);
+    osc.stop(now + 0.5);
+    osc2.stop(now + 0.5);
+  } catch (e) {
+    console.warn("AudioContext map change sfx failed:", e);
+  }
+}
+
+export function playSuperMagnetSound() {
+  if (!isSoundEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Magnetic vacuum activation hum + rising pulse
+    const subOsc = ctx.createOscillator();
+    const pulseOsc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(80, now);
+    subOsc.frequency.exponentialRampToValueAtTime(350, now + 0.5);
+
+    pulseOsc.type = 'sawtooth';
+    pulseOsc.frequency.setValueAtTime(440, now);
+    pulseOsc.frequency.linearRampToValueAtTime(880, now + 0.3);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.setValueAtTime(5, now);
+    filter.frequency.setValueAtTime(500, now);
+    filter.frequency.exponentialRampToValueAtTime(2000, now + 0.5);
+
+    gainNode.gain.setValueAtTime(0.01, now);
+    gainNode.gain.linearRampToValueAtTime(0.2, now + 0.1);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+
+    subOsc.connect(gainNode);
+    pulseOsc.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    subOsc.start(now);
+    pulseOsc.start(now);
+    subOsc.stop(now + 0.58);
+    pulseOsc.stop(now + 0.58);
+  } catch (e) {
+    console.warn("AudioContext super magnet sfx failed:", e);
+  }
+}
+
+export function playSolarStormWarningSound() {
+  if (!isSoundEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Emergency siren klaxon pulse (two-tone warning alarm)
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    
+    // Rapid pitch toggle (750Hz <-> 550Hz)
+    osc.frequency.setValueAtTime(750, now);
+    osc.frequency.setValueAtTime(550, now + 0.12);
+    osc.frequency.setValueAtTime(750, now + 0.24);
+    osc.frequency.setValueAtTime(550, now + 0.36);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1400, now);
+
+    gainNode.gain.setValueAtTime(0.18, now);
+    gainNode.gain.setValueAtTime(0.18, now + 0.45);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.52);
+
+    osc.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.55);
+  } catch (e) {
+    console.warn("AudioContext solar storm warning sfx failed:", e);
+  }
+}
+

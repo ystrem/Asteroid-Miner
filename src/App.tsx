@@ -42,6 +42,9 @@ import {
   playDamageSound, 
   playShieldDownSound, 
   playUpgradeSound,
+  playMapChangeSound,
+  playSuperMagnetSound,
+  playSolarStormWarningSound,
   getSoundState, 
   toggleSound,
   updateEngineHum
@@ -55,6 +58,8 @@ import {
 } from './utils/storage';
 import UpgradeShop from './components/UpgradeShop';
 import AsteroidExplorer from './components/AsteroidExplorer';
+import EarningsChartModal, { EarningDataPoint } from './components/EarningsChartModal';
+import MissionsModal, { Mission } from './components/MissionsModal';
 import { generateSectors, Sector, SectorType } from './data/sectors';
 import { 
   Swords, 
@@ -81,7 +86,9 @@ import {
   Cpu,
   Map,
   Ship,
-  Flame
+  Flame,
+  TrendingUp,
+  CheckSquare
 } from 'lucide-react';
 
 // Optimize performance by patching canvas shadowBlur setter once globally
@@ -206,6 +213,144 @@ export default function App() {
     }
     return false;
   });
+
+  // --- EARNINGS HISTORY GRAPH STATE ---
+  const [isEarningsChartOpen, setIsEarningsChartOpen] = useState<boolean>(false);
+  const [earningsHistory, setEarningsHistory] = useState<EarningDataPoint[]>([]);
+
+  // --- MISSIONS & CONTRACTS STATE ---
+  const [isMissionsOpen, setIsMissionsOpen] = useState<boolean>(false);
+  const [missionToast, setMissionToast] = useState<string | null>(null);
+  const [missions, setMissions] = useState<Mission[]>(() => [
+    {
+      id: 'm_mine_crystals',
+      title: 'Těžba Křemíku',
+      description: 'Vytěž 15 krystalů ze studených křemíkových asteroidů.',
+      category: 'mining',
+      targetType: 'mine_crystal',
+      targetAmount: 15,
+      currentAmount: 0,
+      rewardCrystals: 120,
+      rewardDiamonds: 0,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_mine_diamonds',
+      title: 'Lov Diamantů',
+      description: 'Získej 3 vzácné modré diamanty z hlubinného minerálního jádra.',
+      category: 'mining',
+      targetType: 'mine_diamond',
+      targetAmount: 3,
+      currentAmount: 0,
+      rewardCrystals: 200,
+      rewardDiamonds: 3,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_obsidian',
+      title: 'Vesmírný Alchymista',
+      description: 'Vytěž 1 tmavý fialový obsidián z magmatického sektoru.',
+      category: 'mining',
+      targetType: 'mine_obsidian',
+      targetAmount: 1,
+      currentAmount: 0,
+      rewardCrystals: 150,
+      rewardDiamonds: 5,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_kill_pirates',
+      title: 'Bojovník s Piráty',
+      description: 'Neutralizuj 3 nepřátelské pirátské lodě v sektoru.',
+      category: 'combat',
+      targetType: 'kill_pirates',
+      targetAmount: 3,
+      currentAmount: 0,
+      rewardCrystals: 250,
+      rewardDiamonds: 4,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_destroy_asteroids',
+      title: 'Demoliční Četa',
+      description: 'Rozbij 20 vesmírných asteroidů libovolného typu.',
+      category: 'mining',
+      targetType: 'destroy_asteroids',
+      targetAmount: 20,
+      currentAmount: 0,
+      rewardCrystals: 150,
+      rewardDiamonds: 0,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_super_magnet',
+      title: 'Gravitační Šok',
+      description: 'Aktivuj super-magnetický vysavač 2x během jednoho letu.',
+      category: 'exploration',
+      targetType: 'super_magnet_use',
+      targetAmount: 2,
+      currentAmount: 0,
+      rewardCrystals: 180,
+      rewardDiamonds: 2,
+      completed: false,
+      claimed: false,
+    }
+  ]);
+
+  const advanceMissionProgress = (type: Mission['targetType'], amount: number = 1) => {
+    setMissions(prev => {
+      return prev.map(m => {
+        if (m.targetType === type && !m.completed) {
+          const newAmt = m.currentAmount + amount;
+          const isDone = newAmt >= m.targetAmount;
+          if (isDone) {
+            playUpgradeSound();
+            setMissionToast(`🎯 MISE SPLNĚNA: ${m.title}! Navštivte menu misí pro odměnu.`);
+            setTimeout(() => setMissionToast(null), 4500);
+          }
+          return {
+            ...m,
+            currentAmount: newAmt,
+            completed: isDone
+          };
+        }
+        return m;
+      });
+    });
+  };
+
+  const handleClaimMissionReward = (missionId: string) => {
+    setMissions(prev => {
+      return prev.map(m => {
+        if (m.id === missionId && m.completed && !m.claimed) {
+          if (m.rewardCrystals > 0) {
+            setUpgrades(u => {
+              const updated = { ...u, crystals: u.crystals + m.rewardCrystals };
+              saveUpgrades(updated);
+              return updated;
+            });
+            setRunCrystals(rc => rc + m.rewardCrystals);
+          }
+          if (m.rewardDiamonds > 0) {
+            setUpgrades(u => {
+              const updated = { ...u, diamonds: u.diamonds + m.rewardDiamonds };
+              saveUpgrades(updated);
+              return updated;
+            });
+            setRunDiamonds(rd => rd + m.rewardDiamonds);
+          }
+          playCollectSound('diamond');
+          return { ...m, claimed: true };
+        }
+        return m;
+      });
+    });
+  };
 
   // Floating notifications/gains to display on screen
   const [gains, setGains] = useState<{ id: string; text: string; x: number; y: number; color: string }[]>([]);
@@ -371,6 +516,57 @@ export default function App() {
   useEffect(() => {
     currentSectorIdRef.current = currentSectorId;
   }, [currentSectorId]);
+
+  const runCrystalsRef = useRef<number>(0);
+  const runDiamondsRef = useRef<number>(0);
+  useEffect(() => {
+    runCrystalsRef.current = runCrystals;
+  }, [runCrystals]);
+  useEffect(() => {
+    runDiamondsRef.current = runDiamonds;
+  }, [runDiamonds]);
+
+  // Periodic Telemetry Snapshot for Recharts Earnings Chart (10s intervals)
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const initialTime = new Date().toTimeString().slice(0, 5);
+    setEarningsHistory([{
+      time: initialTime,
+      timestamp: Date.now(),
+      crystals: runCrystalsRef.current,
+      diamonds: runDiamondsRef.current,
+      deltaCrystals: 0,
+      deltaDiamonds: 0
+    }]);
+
+    const interval = setInterval(() => {
+      const timeStr = new Date().toTimeString().slice(0, 5);
+      const curC = runCrystalsRef.current;
+      const curD = runDiamondsRef.current;
+
+      setEarningsHistory(prev => {
+        const lastPt = prev[prev.length - 1];
+        const deltaC = lastPt ? Math.max(0, curC - lastPt.crystals) : curC;
+        const deltaD = lastPt ? Math.max(0, curD - lastPt.diamonds) : curD;
+
+        const newPt: EarningDataPoint = {
+          time: timeStr,
+          timestamp: Date.now(),
+          crystals: curC,
+          diamonds: curD,
+          deltaCrystals: deltaC,
+          deltaDiamonds: deltaD
+        };
+
+        const nextArr = [...prev, newPt];
+        if (nextArr.length > 60) nextArr.shift();
+        return nextArr;
+      });
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [isPlaying]);
 
   useEffect(() => {
     dockedPlayerIdsRef.current = dockedPlayerIds;
@@ -1849,7 +2045,7 @@ export default function App() {
     setSelectedMap(targetMap);
     selectedMapRef.current = targetMap;
 
-    playUpgradeSound();
+    playMapChangeSound();
     triggerCameraShake(25);
     addGainNotification(`🌌 WARP SKOK DO SEKTORU: ${targetSector.name.toUpperCase()}!`, '#a855f7');
 
@@ -4085,6 +4281,9 @@ export default function App() {
         if (solarStormTimeRef.current <= 900 && solarStormTimeRef.current % 60 === 0) {
           const secs = Math.ceil(solarStormTimeRef.current / 60);
           setSolarStormWarning(secs);
+          if ([15, 10, 5, 3, 2, 1].includes(secs)) {
+            playSolarStormWarningSound();
+          }
         }
       } else {
         // Start the storm!
@@ -5645,6 +5844,7 @@ export default function App() {
         const multiplier = getScoreMultiplierFromRef();
         if (ore.type === 'crystal') {
           setRunCrystals(c => c + 3);
+          advanceMissionProgress('mine_crystal', 3);
           scoreAdded = Math.round(150 * multiplier);
           setStats(curr => {
             const nextStats = { ...curr, crystals: curr.crystals + 3 };
@@ -5654,6 +5854,7 @@ export default function App() {
           awardLabel = `${pName}: +3 Krystaly (+${scoreAdded} skóre)`;
         } else if (ore.type === 'diamond') {
           setRunDiamonds(d => d + 2);
+          advanceMissionProgress('mine_diamond', 2);
           scoreAdded = Math.round(5000 * multiplier);
           setStats(curr => {
             const nextStats = { ...curr, diamonds: curr.diamonds + 2 };
@@ -5663,6 +5864,7 @@ export default function App() {
           awardLabel = `${pName}: +2 Diamanty (+${scoreAdded} skóre!)`;
         } else if (ore.type === 'obsidian') {
           setRunObsidian(o => o + 2);
+          advanceMissionProgress('mine_obsidian', 2);
           scoreAdded = Math.round(16000 * multiplier);
           setStats(curr => {
             const nextStats = { ...curr, obsidian: curr.obsidian + 2 };
@@ -7010,7 +7212,8 @@ export default function App() {
     superMagnetActiveRef.current = durationSeconds * 60;
     setSuperMagnetActive(durationSeconds);
 
-    playUpgradeSound();
+    playSuperMagnetSound();
+    advanceMissionProgress('super_magnet_use', 1);
     addGainNotification("SUPER MAGNET: AKTIVOVÁN!", "#06b6d4");
   };
 
@@ -7067,6 +7270,7 @@ export default function App() {
 
   const handlePirateBlowUp = (pirate: Pirate) => {
     playExplosionSound('large');
+    advanceMissionProgress('kill_pirates', 1);
 
     for (let i = 0; i < 35; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -7108,6 +7312,7 @@ export default function App() {
   const handleAsteroidBlowUp = (asteroid: Asteroid) => {
     playExplosionSound(asteroid.size);
     triggerAsteroidPieceExplosionParticles(asteroid);
+    advanceMissionProgress('destroy_asteroids', 1);
 
     let shakeAmt = 3;
     if (asteroid.size === 'colossal') shakeAmt = 15;
@@ -10534,7 +10739,98 @@ export default function App() {
             ctx.stroke();
 
             ctx.restore();
+          }
 
+          // --- ENHANCED MINIMAP: RESOURCE PATHS & WARNING SECTORS ---
+          let nearestResource: { x: number; y: number; label: string; color: string; dist: number } | null = null;
+          let minDist = Infinity;
+
+          oresRef.current.forEach(ore => {
+            const d = Math.hypot(ore.x - centerPlayer.x, ore.y - centerPlayer.y);
+            if (d < minDist) {
+              minDist = d;
+              nearestResource = {
+                x: ore.x,
+                y: ore.y,
+                label: ore.type === 'diamond' ? '💎' : ore.type === 'obsidian' ? '🔮' : '✨',
+                color: ore.type === 'diamond' ? '#38bdf8' : ore.type === 'obsidian' ? '#c084fc' : '#22d3ee',
+                dist: Math.round(d / 10)
+              };
+            }
+          });
+
+          if (!nearestResource) {
+            asteroidsRef.current.forEach(ast => {
+              if (['gold', 'legendary', 'magma', 'ice'].includes(ast.asteroidType)) {
+                const d = Math.hypot(ast.x - centerPlayer.x, ast.y - centerPlayer.y);
+                if (d < minDist) {
+                  minDist = d;
+                  nearestResource = {
+                    x: ast.x,
+                    y: ast.y,
+                    label: ast.asteroidType === 'gold' ? '🟡' : ast.asteroidType === 'magma' ? '🔥' : '❄️',
+                    color: ast.asteroidType === 'gold' ? '#eab308' : ast.asteroidType === 'magma' ? '#f97316' : '#38bdf8',
+                    dist: Math.round(d / 10)
+                  };
+                }
+              }
+            });
+          }
+
+          if (nearestResource) {
+            const res = nearestResource as { x: number; y: number; label: string; color: string; dist: number };
+            const dx = res.x - centerPlayer.x;
+            const dy = res.y - centerPlayer.y;
+            const targetRx = cx + Math.max(-70, Math.min(70, dx * scale));
+            const targetRy = cy + Math.max(-70, Math.min(70, dy * scale));
+
+            ctx.save();
+            ctx.setLineDash([3, 3]);
+            ctx.lineDashOffset = -Date.now() / 40;
+            ctx.strokeStyle = res.color;
+            ctx.lineWidth = 1.2;
+            ctx.shadowColor = res.color;
+            ctx.shadowBlur = 4;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(targetRx, targetRy);
+            ctx.stroke();
+            ctx.restore();
+
+            // Distance Tag Badge
+            ctx.save();
+            ctx.font = 'bold 8px monospace';
+            ctx.fillStyle = res.color;
+            ctx.textAlign = 'center';
+            ctx.fillText(`${res.label} ${res.dist}m`, targetRx, targetRy - 6);
+            ctx.restore();
+          }
+
+          // 2. Solar Storm Hazard Warning Sector Overlay
+          if (solarStormActiveRef.current || solarStormTimeRef.current <= 900) {
+            const dir = solarStormDirectionRef.current || (Math.PI * 0.5);
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 74, dir - 0.5, dir + 0.5);
+            ctx.lineTo(cx, cy);
+            ctx.closePath();
+            ctx.fillStyle = solarStormActiveRef.current ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.18)';
+            ctx.fill();
+
+            ctx.strokeStyle = solarStormActiveRef.current ? '#ef4444' : '#f59e0b';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.font = 'bold 8px monospace';
+            ctx.fillStyle = solarStormActiveRef.current ? '#ef4444' : '#f59e0b';
+            ctx.textAlign = 'center';
+            const warnText = solarStormActiveRef.current ? '⚠️ BOUŘE' : '⚠️ VAROVÁNÍ';
+            ctx.fillText(warnText, cx + Math.cos(dir) * 45, cy + Math.sin(dir) * 45);
+            ctx.restore();
+          }
+
+          if (scanActiveTicksRef.current > 0) {
             const remainingS = (scanActiveTicksRef.current / 60).toFixed(1);
             ctx.font = '900 8px monospace';
             ctx.fillStyle = '#a855f7';
@@ -10902,6 +11198,25 @@ export default function App() {
             >
               <Map className="w-4 h-4" />
               Sektorová Mapa 🌌
+            </button>
+            <button 
+              onClick={() => setIsMissionsOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-950/90 hover:bg-violet-900 border border-violet-500/40 text-violet-200 font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/10 cursor-pointer hover:scale-105 active:scale-95 transition-all relative"
+              id="hud-open-missions-button"
+            >
+              <Target className="w-4 h-4 text-violet-400" />
+              Mise
+              {missions.filter(m => m.completed && !m.claimed).length > 0 && (
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping absolute -top-0.5 -right-0.5 border border-slate-950" />
+              )}
+            </button>
+            <button 
+              onClick={() => setIsEarningsChartOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-200 font-bold text-xs uppercase tracking-wider shadow-lg shadow-cyan-500/10 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+              id="hud-open-earnings-chart-button"
+            >
+              <TrendingUp className="w-4 h-4 text-cyan-400" />
+              Graf Výdělků
             </button>
             <div className="flex gap-1">
               <button 
@@ -12189,6 +12504,29 @@ export default function App() {
           asteroidColor={explorerAsteroidData.color}
           asteroidName={explorerAsteroidData.name}
         />
+      )}
+
+      {/* 8. RECHARTS EARNINGS GRAPH MODAL */}
+      <EarningsChartModal
+        isOpen={isEarningsChartOpen}
+        onClose={() => setIsEarningsChartOpen(false)}
+        data={earningsHistory}
+      />
+
+      {/* 9. MISSIONS & CONTRACTS CHECKLIST MODAL */}
+      <MissionsModal
+        isOpen={isMissionsOpen}
+        onClose={() => setIsMissionsOpen(false)}
+        missions={missions}
+        onClaimReward={handleClaimMissionReward}
+      />
+
+      {/* MISSION COMPLETED TOAST NOTIFICATION */}
+      {missionToast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl bg-slate-900/90 border border-emerald-500 text-emerald-300 font-extrabold text-sm shadow-2xl shadow-emerald-500/20 backdrop-blur-md animate-bounce flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-emerald-400" />
+          {missionToast}
+        </div>
       )}
 
     </div>
