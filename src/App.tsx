@@ -60,6 +60,8 @@ import UpgradeShop from './components/UpgradeShop';
 import AsteroidExplorer from './components/AsteroidExplorer';
 import EarningsChartModal, { EarningDataPoint } from './components/EarningsChartModal';
 import MissionsModal, { Mission } from './components/MissionsModal';
+import ActiveMissionHudWidget from './components/ActiveMissionHudWidget';
+import MissionCompletedModal from './components/MissionCompletedModal';
 import { generateSectors, Sector, SectorType } from './data/sectors';
 import { 
   Swords, 
@@ -221,6 +223,38 @@ export default function App() {
   // --- MISSIONS & CONTRACTS STATE ---
   const [isMissionsOpen, setIsMissionsOpen] = useState<boolean>(false);
   const [missionToast, setMissionToast] = useState<string | null>(null);
+  const [completedMissionForModal, setCompletedMissionForModal] = useState<Mission | null>(null);
+  const [pinnedMissionIds, setPinnedMissionIds] = useState<string[]>(() => {
+    try {
+      const savedList = localStorage.getItem('cosmic_pinned_mission_ids');
+      if (savedList) return JSON.parse(savedList);
+      const oldSingle = localStorage.getItem('cosmic_pinned_mission_id');
+      return oldSingle ? [oldSingle] : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleTogglePinMission = (id: string) => {
+    setPinnedMissionIds(prev => {
+      let updated: string[];
+      if (prev.includes(id)) {
+        updated = prev.filter(item => item !== id);
+      } else {
+        if (prev.length >= 3) {
+          updated = [...prev.slice(1), id];
+        } else {
+          updated = [...prev, id];
+        }
+      }
+      try {
+        localStorage.setItem('cosmic_pinned_mission_ids', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save pinned missions', e);
+      }
+      return updated;
+    });
+  };
   const [missions, setMissions] = useState<Mission[]>(() => [
     {
       id: 'm_mine_crystals',
@@ -251,13 +285,52 @@ export default function App() {
     {
       id: 'm_obsidian',
       title: 'Vesmírný Alchymista',
-      description: 'Vytěž 1 tmavý fialový obsidián z magmatického sektoru.',
+      description: 'Vytěž 2 tmavé fialové obsidiány z magmatického sektoru.',
       category: 'mining',
       targetType: 'mine_obsidian',
-      targetAmount: 1,
+      targetAmount: 2,
+      currentAmount: 0,
+      rewardCrystals: 250,
+      rewardDiamonds: 6,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_gold_rush',
+      title: 'Zlatá Horečka',
+      description: 'Vytěž 5 zlatých minerálů ze žlutých asteroidních polí.',
+      category: 'mining',
+      targetType: 'mine_gold',
+      targetAmount: 5,
+      currentAmount: 0,
+      rewardCrystals: 300,
+      rewardDiamonds: 4,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_ice_collector',
+      title: 'Kryogenní Zdroje',
+      description: 'Získej 6 ledových krystalů z mrznoucích komet.',
+      category: 'mining',
+      targetType: 'mine_ice',
+      targetAmount: 6,
+      currentAmount: 0,
+      rewardCrystals: 180,
+      rewardDiamonds: 3,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_destroy_asteroids',
+      title: 'Demoliční Četa',
+      description: 'Rozbij 25 vesmírných asteroidů libovolného typu.',
+      category: 'mining',
+      targetType: 'destroy_asteroids',
+      targetAmount: 25,
       currentAmount: 0,
       rewardCrystals: 150,
-      rewardDiamonds: 5,
+      rewardDiamonds: 1,
       completed: false,
       claimed: false,
     },
@@ -275,28 +348,93 @@ export default function App() {
       claimed: false,
     },
     {
-      id: 'm_destroy_asteroids',
-      title: 'Demoliční Četa',
-      description: 'Rozbij 20 vesmírných asteroidů libovolného typu.',
-      category: 'mining',
-      targetType: 'destroy_asteroids',
-      targetAmount: 20,
+      id: 'm_kill_pirates_veteran',
+      title: 'Strážce Sektoru',
+      description: 'Znič 8 pirátských útočníků pro zabezpečení obchodní trasy.',
+      category: 'combat',
+      targetType: 'kill_pirates',
+      targetAmount: 8,
       currentAmount: 0,
-      rewardCrystals: 150,
-      rewardDiamonds: 0,
+      rewardCrystals: 500,
+      rewardDiamonds: 8,
       completed: false,
       claimed: false,
     },
     {
       id: 'm_super_magnet',
       title: 'Gravitační Šok',
-      description: 'Aktivuj super-magnetický vysavač 2x během jednoho letu.',
-      category: 'exploration',
+      description: 'Aktivuj super-magnetický vysavač 2x během letu.',
+      category: 'combat',
       targetType: 'super_magnet_use',
       targetAmount: 2,
       currentAmount: 0,
       rewardCrystals: 180,
       rewardDiamonds: 2,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_carrier_dock',
+      title: 'Dokovací Protokol',
+      description: 'Přištaj se na mateřskou loď a proveď servisní dokování 2x.',
+      category: 'exploration',
+      targetType: 'carrier_dock',
+      targetAmount: 2,
+      currentAmount: 0,
+      rewardCrystals: 150,
+      rewardDiamonds: 2,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_warp_jump',
+      title: 'Mezihvězdný Cestovatel',
+      description: 'Proveď 2 warp skoky do různých sektorů vesmírné mapy.',
+      category: 'exploration',
+      targetType: 'warp_jump',
+      targetAmount: 2,
+      currentAmount: 0,
+      rewardCrystals: 220,
+      rewardDiamonds: 3,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_buy_upgrade',
+      title: 'Inženýrská Modernizace',
+      description: 'Kup nebo vylepši 2 systémy své lodi v obchodě.',
+      category: 'exploration',
+      targetType: 'buy_upgrade',
+      targetAmount: 2,
+      currentAmount: 0,
+      rewardCrystals: 300,
+      rewardDiamonds: 4,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_solar_storm',
+      title: 'Solární Štít',
+      description: 'Přežij 1 divokou solární bouři skrytím za obřími asteroidy.',
+      category: 'exploration',
+      targetType: 'solar_storm_survive',
+      targetAmount: 1,
+      currentAmount: 0,
+      rewardCrystals: 350,
+      rewardDiamonds: 6,
+      completed: false,
+      claimed: false,
+    },
+    {
+      id: 'm_boss_kill',
+      title: 'Lov na Generála Pirátů',
+      description: 'Poraz sektorového bosse Generála Pirátů a vyčisti sektor.',
+      category: 'boss',
+      targetType: 'boss_kill',
+      targetAmount: 1,
+      currentAmount: 0,
+      rewardCrystals: 800,
+      rewardDiamonds: 15,
       completed: false,
       claimed: false,
     }
@@ -310,7 +448,13 @@ export default function App() {
           const isDone = newAmt >= m.targetAmount;
           if (isDone) {
             playUpgradeSound();
-            setMissionToast(`🎯 MISE SPLNĚNA: ${m.title}! Navštivte menu misí pro odměnu.`);
+            const updatedCompletedMission: Mission = {
+              ...m,
+              currentAmount: newAmt,
+              completed: true
+            };
+            setCompletedMissionForModal(updatedCompletedMission);
+            setMissionToast(`🎯 MISE SPLNĚNA: ${m.title}! Vyberte si odměnu v detailním okně.`);
             setTimeout(() => setMissionToast(null), 4500);
           }
           return {
@@ -350,6 +494,26 @@ export default function App() {
         return m;
       });
     });
+  };
+
+  const handleClaimBonusReward = (crystals: number, diamonds: number) => {
+    if (crystals > 0) {
+      setUpgrades(u => {
+        const updated = { ...u, crystals: u.crystals + crystals };
+        saveUpgrades(updated);
+        return updated;
+      });
+      setRunCrystals(rc => rc + crystals);
+    }
+    if (diamonds > 0) {
+      setUpgrades(u => {
+        const updated = { ...u, diamonds: u.diamonds + diamonds };
+        saveUpgrades(updated);
+        return updated;
+      });
+      setRunDiamonds(rd => rd + diamonds);
+    }
+    playCollectSound('diamond');
   };
 
   // Floating notifications/gains to display on screen
@@ -1854,6 +2018,7 @@ export default function App() {
     setStats(updatedStats);
     saveUpgrades(updatedUpgrades);
     saveStats(updatedStats);
+    advanceMissionProgress('buy_upgrade', 1);
 
     let nameCzech = 'Úroveň modulu ';
     if (id === 'laserLevel') nameCzech = 'Úroveň laseru ';
@@ -2048,6 +2213,7 @@ export default function App() {
     playMapChangeSound();
     triggerCameraShake(25);
     addGainNotification(`🌌 WARP SKOK DO SEKTORU: ${targetSector.name.toUpperCase()}!`, '#a855f7');
+    advanceMissionProgress('warp_jump', 1);
 
     const carrier = carrierRef.current;
     if (upgrades.carrierClass !== 'none') {
@@ -3075,6 +3241,7 @@ export default function App() {
 
               addGainNotification(`🚀 ${p.name} se zadokoval do mateřské lodi!`, p.color);
               playUpgradeSound();
+              advanceMissionProgress('carrier_dock', 1);
             }
           }
         }
@@ -4186,6 +4353,7 @@ export default function App() {
         solarStormActiveRef.current = false;
         setSolarStormActive(false);
         addGainNotification("🌤️ SOLÁRNÍ BOUŘE SKONČILA", "#10b981");
+        advanceMissionProgress('solar_storm_survive', 1);
         // Reset next storm timer (approx 35s to 60s cooldown)
         solarStormTimeRef.current = 2100 + Math.floor(Math.random() * 1500);
       } else {
@@ -4627,6 +4795,7 @@ export default function App() {
         } else {
           // Absolute death! Defeated for good.
           bossRef.current = null;
+          advanceMissionProgress('boss_kill', 1);
 
           // Win rewards! Large crystals, diamonds, obsidian!
           setStats(curr => {
@@ -7313,6 +7482,12 @@ export default function App() {
     playExplosionSound(asteroid.size);
     triggerAsteroidPieceExplosionParticles(asteroid);
     advanceMissionProgress('destroy_asteroids', 1);
+
+    if (asteroid.asteroidType === 'gold-rush') {
+      advanceMissionProgress('mine_gold', 1);
+    } else if (asteroid.asteroidType === 'ice') {
+      advanceMissionProgress('mine_ice', 1);
+    }
 
     let shakeAmt = 3;
     if (asteroid.size === 'colossal') shakeAmt = 15;
@@ -11218,6 +11393,16 @@ export default function App() {
               <TrendingUp className="w-4 h-4 text-cyan-400" />
               Graf Výdělků
             </button>
+
+            {/* ACTIVE MISSION HUD WIDGET */}
+            <div className="mt-1">
+              <ActiveMissionHudWidget
+                missions={missions}
+                pinnedMissionIds={pinnedMissionIds}
+                onTogglePinMission={handleTogglePinMission}
+                onOpenMissionsModal={() => setIsMissionsOpen(true)}
+              />
+            </div>
             <div className="flex gap-1">
               <button 
                 onClick={handleToggleMute}
@@ -12518,7 +12703,19 @@ export default function App() {
         isOpen={isMissionsOpen}
         onClose={() => setIsMissionsOpen(false)}
         missions={missions}
+        playerStats={stats}
+        pinnedMissionIds={pinnedMissionIds}
+        onTogglePinMission={handleTogglePinMission}
         onClaimReward={handleClaimMissionReward}
+        onClaimBonusReward={handleClaimBonusReward}
+      />
+
+      {/* 10. MISSION COMPLETED REWARD POPUP MODAL */}
+      <MissionCompletedModal
+        mission={completedMissionForModal}
+        onClose={() => setCompletedMissionForModal(null)}
+        onClaimReward={handleClaimMissionReward}
+        onOpenMissionsModal={() => setIsMissionsOpen(true)}
       />
 
       {/* MISSION COMPLETED TOAST NOTIFICATION */}
