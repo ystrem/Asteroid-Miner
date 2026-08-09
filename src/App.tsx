@@ -261,6 +261,7 @@ export default function App() {
       title: 'Těžba Křemíku',
       description: 'Vytěž 15 krystalů ze studených křemíkových asteroidů.',
       category: 'mining',
+      difficulty: 'easy',
       targetType: 'mine_crystal',
       targetAmount: 15,
       currentAmount: 0,
@@ -274,6 +275,7 @@ export default function App() {
       title: 'Lov Diamantů',
       description: 'Získej 3 vzácné modré diamanty z hlubinného minerálního jádra.',
       category: 'mining',
+      difficulty: 'medium',
       targetType: 'mine_diamond',
       targetAmount: 3,
       currentAmount: 0,
@@ -287,6 +289,7 @@ export default function App() {
       title: 'Vesmírný Alchymista',
       description: 'Vytěž 2 tmavé fialové obsidiány z magmatického sektoru.',
       category: 'mining',
+      difficulty: 'hard',
       targetType: 'mine_obsidian',
       targetAmount: 2,
       currentAmount: 0,
@@ -300,6 +303,7 @@ export default function App() {
       title: 'Zlatá Horečka',
       description: 'Vytěž 5 zlatých minerálů ze žlutých asteroidních polí.',
       category: 'mining',
+      difficulty: 'medium',
       targetType: 'mine_gold',
       targetAmount: 5,
       currentAmount: 0,
@@ -313,6 +317,7 @@ export default function App() {
       title: 'Kryogenní Zdroje',
       description: 'Získej 6 ledových krystalů z mrznoucích komet.',
       category: 'mining',
+      difficulty: 'easy',
       targetType: 'mine_ice',
       targetAmount: 6,
       currentAmount: 0,
@@ -326,6 +331,7 @@ export default function App() {
       title: 'Demoliční Četa',
       description: 'Rozbij 25 vesmírných asteroidů libovolného typu.',
       category: 'mining',
+      difficulty: 'easy',
       targetType: 'destroy_asteroids',
       targetAmount: 25,
       currentAmount: 0,
@@ -339,6 +345,7 @@ export default function App() {
       title: 'Bojovník s Piráty',
       description: 'Neutralizuj 3 nepřátelské pirátské lodě v sektoru.',
       category: 'combat',
+      difficulty: 'medium',
       targetType: 'kill_pirates',
       targetAmount: 3,
       currentAmount: 0,
@@ -352,6 +359,7 @@ export default function App() {
       title: 'Strážce Sektoru',
       description: 'Znič 8 pirátských útočníků pro zabezpečení obchodní trasy.',
       category: 'combat',
+      difficulty: 'hard',
       targetType: 'kill_pirates',
       targetAmount: 8,
       currentAmount: 0,
@@ -365,6 +373,7 @@ export default function App() {
       title: 'Gravitační Šok',
       description: 'Aktivuj super-magnetický vysavač 2x během letu.',
       category: 'combat',
+      difficulty: 'easy',
       targetType: 'super_magnet_use',
       targetAmount: 2,
       currentAmount: 0,
@@ -378,6 +387,7 @@ export default function App() {
       title: 'Dokovací Protokol',
       description: 'Přištaj se na mateřskou loď a proveď servisní dokování 2x.',
       category: 'exploration',
+      difficulty: 'easy',
       targetType: 'carrier_dock',
       targetAmount: 2,
       currentAmount: 0,
@@ -391,6 +401,7 @@ export default function App() {
       title: 'Mezihvězdný Cestovatel',
       description: 'Proveď 2 warp skoky do různých sektorů vesmírné mapy.',
       category: 'exploration',
+      difficulty: 'medium',
       targetType: 'warp_jump',
       targetAmount: 2,
       currentAmount: 0,
@@ -404,6 +415,7 @@ export default function App() {
       title: 'Inženýrská Modernizace',
       description: 'Kup nebo vylepši 2 systémy své lodi v obchodě.',
       category: 'exploration',
+      difficulty: 'easy',
       targetType: 'buy_upgrade',
       targetAmount: 2,
       currentAmount: 0,
@@ -417,6 +429,7 @@ export default function App() {
       title: 'Solární Štít',
       description: 'Přežij 1 divokou solární bouři skrytím za obřími asteroidy.',
       category: 'exploration',
+      difficulty: 'hard',
       targetType: 'solar_storm_survive',
       targetAmount: 1,
       currentAmount: 0,
@@ -430,6 +443,7 @@ export default function App() {
       title: 'Lov na Generála Pirátů',
       description: 'Poraz sektorového bosse Generála Pirátů a vyčisti sektor.',
       category: 'boss',
+      difficulty: 'expert',
       targetType: 'boss_kill',
       targetAmount: 1,
       currentAmount: 0,
@@ -440,27 +454,72 @@ export default function App() {
     }
   ]);
 
+  const missionsRef = useRef<Mission[]>(missions);
+  useEffect(() => {
+    missionsRef.current = missions;
+  }, [missions]);
+
   const advanceMissionProgress = (type: Mission['targetType'], amount: number = 1) => {
     setMissions(prev => {
       return prev.map(m => {
         if (m.targetType === type && !m.completed) {
           const newAmt = m.currentAmount + amount;
           const isDone = newAmt >= m.targetAmount;
+          const now = Date.now();
+          const startTime = m.startTime || now;
+
+          let bonusCrystalsGained = 0;
+          let bonusDiamondsGained = 0;
+          let bonusReason: string | undefined = undefined;
+
           if (isDone) {
             playUpgradeSound();
+            const elapsedSec = (now - startTime) / 1000;
+            const isSolarStorm = solarStormActiveRef.current;
+            const isSpeedRun = elapsedSec <= 60; // Completed in under 60 seconds
+
+            let bonusMult = 0;
+            const reasons: string[] = [];
+            if (isSolarStorm) {
+              bonusMult += 0.35;
+              reasons.push('⚡ Solární bouře (+35%)');
+            }
+            if (isSpeedRun) {
+              bonusMult += 0.25;
+              reasons.push('⏱️ Rychlostní rekord (+25%)');
+            }
+
+            if (bonusMult > 0) {
+              bonusCrystalsGained = Math.round(m.rewardCrystals * bonusMult);
+              bonusDiamondsGained = m.rewardDiamonds > 0 ? Math.max(1, Math.round(m.rewardDiamonds * bonusMult)) : 0;
+              bonusReason = reasons.join(' • ');
+            }
+
             const updatedCompletedMission: Mission = {
               ...m,
               currentAmount: newAmt,
-              completed: true
+              completed: true,
+              completedTime: now,
+              bonusCrystalsGained,
+              bonusDiamondsGained,
+              bonusReason
             };
+
             setCompletedMissionForModal(updatedCompletedMission);
-            setMissionToast(`🎯 MISE SPLNĚNA: ${m.title}! Vyberte si odměnu v detailním okně.`);
+            setMissionToast(
+              bonusReason
+                ? `🎯 MISE SPLNĚNA S REKORDNÍM BONUSU: ${m.title}! (${bonusReason})`
+                : `🎯 MISE SPLNĚNA: ${m.title}! Vyberte si odměnu v detailním okně.`
+            );
             setTimeout(() => setMissionToast(null), 4500);
+
+            return updatedCompletedMission;
           }
+
           return {
             ...m,
             currentAmount: newAmt,
-            completed: isDone
+            startTime: startTime
           };
         }
         return m;
@@ -472,21 +531,24 @@ export default function App() {
     setMissions(prev => {
       return prev.map(m => {
         if (m.id === missionId && m.completed && !m.claimed) {
-          if (m.rewardCrystals > 0) {
+          const totalCrystals = m.rewardCrystals + (m.bonusCrystalsGained || 0);
+          const totalDiamonds = m.rewardDiamonds + (m.bonusDiamondsGained || 0);
+
+          if (totalCrystals > 0) {
             setUpgrades(u => {
-              const updated = { ...u, crystals: u.crystals + m.rewardCrystals };
+              const updated = { ...u, crystals: u.crystals + totalCrystals };
               saveUpgrades(updated);
               return updated;
             });
-            setRunCrystals(rc => rc + m.rewardCrystals);
+            setRunCrystals(rc => rc + totalCrystals);
           }
-          if (m.rewardDiamonds > 0) {
+          if (totalDiamonds > 0) {
             setUpgrades(u => {
-              const updated = { ...u, diamonds: u.diamonds + m.rewardDiamonds };
+              const updated = { ...u, diamonds: u.diamonds + totalDiamonds };
               saveUpgrades(updated);
               return updated;
             });
-            setRunDiamonds(rd => rd + m.rewardDiamonds);
+            setRunDiamonds(rd => rd + totalDiamonds);
           }
           playCollectSound('diamond');
           return { ...m, claimed: true };
@@ -10765,6 +10827,10 @@ export default function App() {
           ctx.arc(cx, cy, 75, 0, Math.PI * 2);
           ctx.stroke();
         } else {
+          // Check incomplete active missions for radar proximity alerts
+          const incompleteMissions = missionsRef.current.filter(m => !m.completed);
+          let closestMissionTarget: { title: string; distMeters: number; rx: number; ry: number } | null = null;
+
           // Draw Asteroids on Radar
           asteroidsRef.current.forEach(ast => {
             const dx = ast.x - centerPlayer.x;
@@ -10785,6 +10851,45 @@ export default function App() {
                 ctx.fillStyle = '#94a3b8'; // grey default
               }
               ctx.fill();
+
+              // Check if any active mission targets this asteroid
+              const matchingMission = incompleteMissions.find(m => {
+                if (ast.asteroidType === 'magma' && m.targetType === 'mine_obsidian') return true;
+                if (ast.asteroidType === 'ice' && m.targetType === 'mine_ice') return true;
+                if (ast.asteroidType === 'gold' && m.targetType === 'mine_gold') return true;
+                if (ast.asteroidType === 'legendary' && (m.targetType === 'mine_diamond' || m.targetType === 'mine_gold')) return true;
+                if (m.targetType === 'destroy_asteroids') return true;
+                if (m.targetType === 'mine_crystal') return true;
+                return false;
+              });
+
+              if (matchingMission) {
+                // Draw Radar Mission Reticle
+                const pulseRadius = 5.5 + Math.sin(Date.now() / 120) * 2.0;
+                ctx.save();
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(ax, ay, pulseRadius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#34d399';
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath();
+                ctx.arc(ax, ay, pulseRadius + 3, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+
+                const dM = Math.round(dist / 10);
+                if (!closestMissionTarget || dM < closestMissionTarget.distMeters) {
+                  closestMissionTarget = {
+                    title: matchingMission.title,
+                    distMeters: dM,
+                    rx: ax,
+                    ry: ay
+                  };
+                }
+              }
             }
           });
 
@@ -10807,6 +10912,28 @@ export default function App() {
               ctx.strokeStyle = '#f43f5e';
               ctx.lineWidth = 1.0;
               ctx.stroke();
+
+              // Check if pirate is a mission target
+              const pirateMission = incompleteMissions.find(m => m.targetType === 'kill_pirates');
+              if (pirateMission) {
+                ctx.save();
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(px, py, 7.5 + Math.sin(Date.now() / 100) * 2, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+
+                const dM = Math.round(dist / 10);
+                if (!closestMissionTarget || dM < closestMissionTarget.distMeters) {
+                  closestMissionTarget = {
+                    title: pirateMission.title,
+                    distMeters: dM,
+                    rx: px,
+                    ry: py
+                  };
+                }
+              }
             }
           });
 
@@ -10835,6 +10962,27 @@ export default function App() {
               ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
               ctx.fillStyle = '#ffffff';
               ctx.fill();
+
+              const bossMission = incompleteMissions.find(m => m.targetType === 'boss_kill');
+              if (bossMission) {
+                ctx.save();
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 2.0;
+                ctx.beginPath();
+                ctx.arc(bx, by, 11.0 + Math.sin(Date.now() / 90) * 3, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+
+                const dM = Math.round(dist / 10);
+                if (!closestMissionTarget || dM < closestMissionTarget.distMeters) {
+                  closestMissionTarget = {
+                    title: bossMission.title,
+                    distMeters: dM,
+                    rx: bx,
+                    ry: by
+                  };
+                }
+              }
             }
           }
 
@@ -10890,6 +11038,33 @@ export default function App() {
                   ctx.moveTo(ox, oy - 6); ctx.lineTo(ox, oy - 2);
                   ctx.moveTo(ox, oy + 2); ctx.lineTo(ox, oy + 6);
                   ctx.stroke();
+
+                  // Check if ore is needed for active mission
+                  const oreMission = incompleteMissions.find(m => {
+                    if (ore.type === 'diamond' && m.targetType === 'mine_diamond') return true;
+                    if (ore.type === 'obsidian' && m.targetType === 'mine_obsidian') return true;
+                    return false;
+                  });
+
+                  if (oreMission) {
+                    ctx.save();
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, 8.5 + Math.sin(Date.now() / 110) * 2, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    const dM = Math.round(dist / 10);
+                    if (!closestMissionTarget || dM < closestMissionTarget.distMeters) {
+                      closestMissionTarget = {
+                        title: oreMission.title,
+                        distMeters: dM,
+                        rx: ox,
+                        ry: oy
+                      };
+                    }
+                  }
                 }
               }
             });
@@ -11025,6 +11200,27 @@ export default function App() {
               ctx.textAlign = 'center';
               ctx.fillText(`KALIBRACE...`, cx, cy + 65);
             }
+          }
+
+          // Mission Radar Target Proximity Tag Badge
+          if (closestMissionTarget) {
+            const targetInfo = closestMissionTarget as { title: string; distMeters: number; rx: number; ry: number };
+            ctx.save();
+            ctx.font = 'bold 8px monospace';
+            const labelText = `🎯 CÍL MISE: ${targetInfo.distMeters}m`;
+            const textWidth = ctx.measureText(labelText).width;
+            
+            // Badge background container above radar
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+            ctx.fillRect(cx - textWidth / 2 - 6, cy - 88, textWidth + 12, 14);
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(cx - textWidth / 2 - 6, cy - 88, textWidth + 12, 14);
+
+            ctx.fillStyle = '#fbbf24';
+            ctx.textAlign = 'center';
+            ctx.fillText(labelText, cx, cy - 77);
+            ctx.restore();
           }
         }
 
@@ -11580,503 +11776,462 @@ export default function App() {
           {/* Constellation backplate graphics */}
           <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#1e293b_1.5px,transparent_1.5px)] [background-size:24px_24px] pointer-events-none" />
 
-          <div className="w-full max-w-xl text-center space-y-6 sm:space-y-8 z-10 p-5 sm:p-8 bg-slate-900/40 border border-slate-850 rounded-2xl md:backdrop-blur-md">
+          <div className="w-full max-w-5xl my-auto text-center space-y-3 z-10 p-3.5 sm:p-5 bg-slate-900/60 border border-slate-800 rounded-2xl md:backdrop-blur-md max-h-[94vh] overflow-y-auto">
             
-            {/* Game Badge title */}
-            <div className="space-y-2 flex flex-col items-center">
-              <div className="flex items-center gap-2 bg-indigo-950 border border-indigo-800/40 px-3 py-1.5 rounded-full text-[10px] tracking-widest font-black uppercase text-indigo-400 shadow-inner">
-                <Compass className="w-3.5 h-3.5" />
-                Vesmírný simulátor těžaře
-              </div>
-              <h1 className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-amber-400 to-indigo-500 tracking-tight select-none">
-                ASTEROID MINER
-              </h1>
-              <p className="text-sm font-medium text-slate-400 font-mono tracking-tight max-w-md mx-auto uppercase mt-1">
-                Těžařská mise začíná hned za mateřským hangárem!
-              </p>
-            </div>
-
-            {/* Feature Bento overview */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
-              <div className="bg-slate-950/55 p-3.5 rounded-xl border border-slate-850">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block mr-1.5 animate-pulse" />
-                <h4 className="text-xs font-black uppercase text-slate-200 mt-1">Krystaly</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
-                  Běžná minerální ruda vytěžená z jader. Slouží k opravám trupu a nákupu základní plazmových děl.
-                </p>
-              </div>
-
-              <div className="bg-slate-950/55 p-3.5 rounded-xl border border-slate-850">
-                <Gem className="w-4 h-4 text-blue-400 inline-block mb-1" />
-                <h4 className="text-xs font-black uppercase text-slate-200">Diamanty</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
-                  Vzácný modrý drahokam z jader tlustých asteroidů. Nutný pro kalibrace magnetu a nákup složitých štítů.
-                </p>
-              </div>
-
-              <div className="bg-slate-950/55 p-3.5 rounded-xl border border-slate-850">
-                <div className="w-3 h-3 bg-purple-500 rotate-45 border border-purple-300 inline-block mb-1.5" />
-                <h4 className="text-xs font-black uppercase text-slate-200 mt-0.5">Obsidián</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
-                  Ultra vzácná vesmírná vyvřelina. Těžká a masivní struktura, kterou potřebuješ na pancíř trupu a ultimátní lasery.
-                </p>
-              </div>
-            </div>
-
-            {/* Fleet drop-in configuration and controls */}
-            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-3.5 text-left text-xs">
-              <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block font-sans">🛸 SYSTÉM DYNAMICKÉHO PŘIPOJOVÁNÍ HRÁČŮ (DROP-IN)</span>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-slate-300 font-mono">
-                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
-                  <span className="text-cyan-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 1 (KLÁVESNICE - ŠIPKY)</span>
-                  <p>• <b>Pohyb:</b> Šipky [ ↑ / ↓ ] (Let / Zpět)</p>
-                  <p>• <b>Otáčení:</b> Šipky [ ← / → ]</p>
-                  <p>• <b>Laser:</b> Pravý CTRL / Mezerník</p>
-                  <p>• <b>Kotva:</b> Klávesa [ H ] nebo [ 0 ]</p>
-                  <p>• <b>Dovednosti:</b> Čísla [ 9, 8, 7, 6 ]</p>
+            {/* Game Badge title (compact header) */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+              <div className="flex items-center gap-3 text-left">
+                <div className="flex items-center gap-1.5 bg-indigo-950/80 border border-indigo-800/50 px-2.5 py-1 rounded-full text-[9px] tracking-widest font-black uppercase text-indigo-400 shadow-inner shrink-0">
+                  <Compass className="w-3 h-3" />
+                  Vesmírný simulátor
                 </div>
-
-                <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-850/80">
-                  <span className="text-purple-400 font-black block border-b border-slate-950 pb-1 mb-1.5 text-[10px]">⌨️ PILOT 2 (KLÁVESNICE - WASD)</span>
-                  <p>• <b>Pohyb:</b> Klávesy [ W / S ] (Let / Zpět)</p>
-                  <p>• <b>Otáčení:</b> Klávesy [ A / D ]</p>
-                  <p>• <b>Laser:</b> Levý CTRL / [ F ] / Mezerník</p>
-                  <p>• <b>Kotva:</b> Klávesa [ G ] nebo [ 4 ]</p>
-                  <p>• <b>Dovednosti:</b> [ Q, E, R, T ] nebo [ 1, 2, 3, 5 ]</p>
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-amber-400 to-indigo-500 tracking-tight select-none leading-none">
+                    ASTEROID MINER
+                  </h1>
+                  <p className="text-[10px] font-medium text-slate-400 font-mono tracking-tight uppercase mt-0.5">
+                    Těžařská mise za mateřským hangárem!
+                  </p>
                 </div>
               </div>
 
-              <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-850/80 text-[11px] text-slate-300 leading-relaxed font-sans">
-                <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-1 mb-1.5 text-[10px] uppercase">🎮 PILOTI NA OVLADAČÍCH (GAMEPADECH / STEAM DECKU)</span>
-                <p>• Připojte gamepad a stiskněte jakékoli tlačítko pro automatický drop-in!</p>
-                <p className="mt-1.5 pt-1.5 border-t border-slate-900/60 font-mono text-[10px] text-slate-400 space-y-0.5">
-                  • <b>Let vpřed:</b> Levý Trigger [ LT ]<br/>
-                  • <b>Laser (Střelba):</b> Pravý Trigger [ RT ]<br/>
-                  • <b>Směr letu:</b> Levá analogová páčka<br/>
-                  • <b>Otáčení lodičky:</b> Pravá analogová páčka<br/>
-                  • <b>Speciální útoky (Schopnosti):</b> Tlačítka [ X, Y, B ]
-                </p>
-              </div>
-
-              {/* Gamepad connection status detection */}
-              {gamepadsDetected.some(x => x) ? (
-                <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-mono bg-emerald-950/20 border border-emerald-900/30 px-3 py-1.5 rounded-lg">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Satelitní družice detekovala připojené herní ovladače (Gamepady)!</span>
-                </div>
-              ) : (
-                <div className="text-[10px] text-slate-500 font-mono italic px-1 pt-0.5">
-                  💡 Tip: Připojte Bluetooth/USB gamepady pro epickou hru s kamarády na jedné obrazovce!
+              {stats.highScore > 0 && (
+                <div className="flex items-center gap-4 text-[10px] font-mono text-slate-400 bg-slate-950/60 px-3 py-1.5 rounded-lg border border-slate-850">
+                  <span>High Score: <b className="text-amber-400">{stats.highScore}</b></span>
+                  <span>Vytěženo: <b className="text-cyan-400">{stats.totalAsteroidsMined}</b></span>
                 </div>
               )}
             </div>
 
-            {/* Mission Configuration Panel */}
-            <div className="bg-slate-950/80 p-4 border border-slate-850 rounded-xl space-y-4 text-left">
-              <span className="text-cyan-400 font-extrabold uppercase tracking-wider text-[10px] block font-sans">🛡️ NASTAVENÍ EXPEDIČNÍ MISE</span>
+            {/* 2-COLUMN LANDSCAPE LAYOUT GRID */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-left">
               
-              {/* Difficulty Select */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-300 block">Obtížnost:</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDifficulty('easy');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
-                      difficulty === 'easy'
-                        ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)] font-bold'
-                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      SNADNÁ
-                    </span>
-                    <span className="text-[8px] text-slate-500 mt-0.5">Vrtání +50%, Škody -50%</span>
-                  </button>
+              {/* LEFT COLUMN: Overview & Controls */}
+              <div className="space-y-3 flex flex-col justify-between">
+                
+                {/* Feature Bento overview (Compact 3 cols) */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-850/80">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block mr-1 animate-pulse" />
+                    <h4 className="text-[11px] font-black uppercase text-slate-200 inline-block">Krystaly</h4>
+                    <p className="text-[9px] text-slate-400 leading-snug mt-0.5">
+                      Běžná minerální ruda z jader na opravy a plazmová děla.
+                    </p>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDifficulty('medium');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
-                      difficulty === 'medium'
-                        ? 'bg-blue-950/40 border-blue-500 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.15)] font-bold'
-                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                      STŘEDNÍ
-                    </span>
-                    <span className="text-[8px] text-slate-500 mt-0.5">Klasický zážitek</span>
-                  </button>
+                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-850/80">
+                    <Gem className="w-3 h-3 text-blue-400 inline-block mr-1" />
+                    <h4 className="text-[11px] font-black uppercase text-slate-200 inline-block">Diamanty</h4>
+                    <p className="text-[9px] text-slate-400 leading-snug mt-0.5">
+                      Vzácný modrý drahokam pro kalibrace magnetu a štíty.
+                    </p>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDifficulty('hard');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
-                      difficulty === 'hard'
-                        ? 'bg-amber-950/40 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
-                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      TĚŽKÁ
-                    </span>
-                    <span className="text-[8px] text-slate-500 mt-0.5">Vrtání -20%, Škody +50%</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDifficulty('nightmare');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
-                      difficulty === 'nightmare'
-                        ? 'bg-rose-950/40 border-rose-500 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.15)] font-bold animate-pulse'
-                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-rose-950/40 hover:text-slate-300'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1 text-rose-400 font-bold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                      NOČNÍ MŮRA
-                    </span>
-                    <span className="text-[8px] text-rose-500/80 mt-0.5">Škody +120%, Dual-Lasery</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Map / Sector Selection */}
-              <div className="space-y-2 pt-2.5 border-t border-slate-900">
-                <label className="text-xs font-bold text-slate-300 block">Kosmický Sektor (Mapa):</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedMap('silicon');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      selectedMap === 'silicon'
-                        ? 'bg-slate-900 border-slate-500 text-slate-200 shadow-[0_0_12px_rgba(148,163,184,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">🪨</span>
-                      <span className="font-bold tracking-tight text-slate-300">SEKTOR ALPHA: KŘEMÍKOVÝ PÁS</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Standardní pás s vyváženým výskytem všech surovin. Bezpečný start. (1.0x skóre)
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedMap('magma');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      selectedMap === 'magma'
-                        ? 'bg-orange-950/20 border-orange-500 text-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">🔥</span>
-                      <span className="font-bold tracking-tight text-orange-300">SEKTOR BETA: MAGMATICKÉ PEKLO</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Zvýšený výskyt magmatických skál s drahým obsidiánem. <span className="text-orange-400 font-bold">Anomálie: Solární erupce (lávové střely).</span> (1.25x skóre)
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedMap('ice');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      selectedMap === 'ice'
-                        ? 'bg-sky-950/20 border-sky-500 text-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">❄️</span>
-                      <span className="font-bold tracking-tight text-sky-300">SEKTOR GAMMA: LEDOVÝ PRSTENEC</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Těžařská zóna s masivním podílem ledových jader a diamantů. <span className="text-sky-400 font-bold">Anomálie: Blizzardy (námraza lodě zpomaluje, roztaje střelbou!).</span> (1.25x skóre)
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedMap('gold');
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      selectedMap === 'gold'
-                        ? 'bg-amber-950/20 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">👑</span>
-                      <span className="font-bold tracking-tight text-amber-300 font-black">SEKTOR DELTA: ZLATÉ JÁDRO</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Masivní naleziště ryzího zlata. Agresivní ochrana. <span className="text-amber-400 font-bold">Anomálie: Elektromagnetické bouře (výpadek radaru a magnetu).</span> (1.5x skóre)
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Enemy Toggle Option */}
-              <div className="flex items-center justify-between bg-slate-900/35 p-2.5 rounded-lg border border-slate-850">
-                <div className="space-y-0.5 pr-2">
-                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                    🛡️ Nepřátelské lodě a korzáři:
-                    <span className={`px-1.5 py-0.5 text-[8px] font-mono font-black uppercase rounded ${
-                      enemiesEnabled ? 'bg-red-950 text-red-400 border border-red-900/50' : 'bg-emerald-950 text-emerald-400 border border-emerald-900/50'
-                    }`}>
-                      {enemiesEnabled ? 'AKTIVNÍ' : 'DEAKTIVOVÁNO'}
-                    </span>
-                  </label>
-                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
-                    Pokud jsou deaktivováni, nebudou se v sektoru objevovat žádné pirátské lodě, což umožňuje klidnou těžbu.
-                  </p>
+                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-850/80">
+                    <div className="w-2.5 h-2.5 bg-purple-500 rotate-45 border border-purple-300 inline-block mr-1" />
+                    <h4 className="text-[11px] font-black uppercase text-slate-200 inline-block">Obsidián</h4>
+                    <p className="text-[9px] text-slate-400 leading-snug mt-0.5">
+                      Ultra vzácná vyvřelina na pancíř a ultimátní lasery.
+                    </p>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEnemiesEnabled(!enemiesEnabled);
-                    playLaserSound(0);
-                  }}
-                  className={`w-12 h-6 rounded-full p-0.5 transition-all cursor-pointer outline-none relative flex items-center shrink-0 ${
-                    enemiesEnabled ? 'bg-red-600' : 'bg-slate-800'
-                  }`}
-                  id="enemies-toggle-btn"
-                >
-                  <div className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200 ${
-                    enemiesEnabled ? 'translate-x-6' : 'translate-x-0'
-                  }`} />
-                </button>
-              </div>
+                {/* Fleet drop-in configuration and controls */}
+                <div className="bg-slate-950/80 p-3 border border-slate-850 rounded-xl space-y-2 text-xs flex-1 flex flex-col justify-between">
+                  <span className="text-amber-400 font-bold uppercase tracking-wider text-[9px] block font-sans">🛸 SYSTÉM DYNAMICKÉHO PŘIPOJOVÁNÍ HRÁČŮ (DROP-IN)</span>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] text-slate-300 font-mono">
+                    <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-850/80">
+                      <span className="text-cyan-400 font-black block border-b border-slate-950 pb-0.5 mb-1 text-[9px]">⌨️ PILOT 1 (ŠIPKY)</span>
+                      <p>• <b>Pohyb:</b> Šipky [ ↑ / ↓ ]</p>
+                      <p>• <b>Otáčení:</b> Šipky [ ← / → ]</p>
+                      <p>• <b>Laser:</b> Pravý CTRL / Mezerník</p>
+                      <p>• <b>Kotva:</b> [ H ] / [ 0 ] | <b>Dovednosti:</b> [ 9, 8, 7, 6 ]</p>
+                    </div>
 
-              {/* Performance Mode Option */}
-              <div className="flex items-center justify-between bg-slate-900/35 p-2.5 rounded-lg border border-slate-850">
-                <div className="space-y-0.5 pr-2">
-                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                    <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" /> Úsporný režim (Steam Deck / Mobil):
-                    <span className={`px-1.5 py-0.5 text-[8px] font-mono font-black uppercase rounded ${
-                      lowPerformanceMode ? 'bg-cyan-950 text-cyan-400 border border-cyan-900/50 animate-pulse' : 'bg-slate-950 text-slate-400 border border-slate-900/50'
-                    }`}>
-                      {lowPerformanceMode ? 'ZAPNUTO (PLYNULÉ)' : 'VYPNUTO (KLASICKÉ)'}
-                    </span>
-                  </label>
-                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
-                    Vypne náročné zářící efekty a stíny, zredukuje nadbytečné efekty výbuchů a stabilizuje snímkovou frekvenci (FPS) na Steam Decku či mobilech.
-                  </p>
+                    <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-850/80">
+                      <span className="text-purple-400 font-black block border-b border-slate-950 pb-0.5 mb-1 text-[9px]">⌨️ PILOT 2 (WASD)</span>
+                      <p>• <b>Pohyb:</b> Klávesy [ W / S ]</p>
+                      <p>• <b>Otáčení:</b> Klávesy [ A / D ]</p>
+                      <p>• <b>Laser:</b> Levý CTRL / [ F ] / Mezerník</p>
+                      <p>• <b>Kotva:</b> [ G ] / [ 4 ] | <b>Dovednosti:</b> [ Q, E, R, T ]</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-850/80 text-[10px] text-slate-300 leading-snug font-sans">
+                    <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-0.5 mb-1 text-[9px] uppercase">🎮 GAMEPADY / STEAM DECK (AUTOMATICKÝ DROP-IN)</span>
+                    <p className="font-mono text-[9px] text-slate-400">
+                      • <b>Let:</b> Levý Trigger [LT] • <b>Laser:</b> Pravý Trigger [RT] • <b>Pohyb/Otáčení:</b> Páčky • <b>Schopnosti:</b> [X, Y, B]
+                    </p>
+                  </div>
+
+                  {/* Gamepad connection status detection */}
+                  {gamepadsDetected.some(x => x) ? (
+                    <div className="flex items-center gap-2 text-[9px] text-emerald-400 font-mono bg-emerald-950/20 border border-emerald-900/30 px-2.5 py-1 rounded-lg">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Satelitní družice detekovala připojené herní ovladače (Gamepady)!</span>
+                    </div>
+                  ) : (
+                    <div className="text-[9px] text-slate-500 font-mono italic px-1 pt-0.5">
+                      💡 Tip: Připojte Bluetooth/USB gamepady pro epickou hru s kamarády na jedné obrazovce!
+                    </div>
+                  )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLowPerformanceMode(!lowPerformanceMode);
-                    playLaserSound(0);
-                  }}
-                  className={`w-12 h-6 rounded-full p-0.5 transition-all cursor-pointer outline-none relative flex items-center shrink-0 ${
-                    lowPerformanceMode ? 'bg-cyan-600' : 'bg-slate-800'
-                  }`}
-                  id="performance-toggle-btn"
-                >
-                  <div className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200 ${
-                    lowPerformanceMode ? 'translate-x-6' : 'translate-x-0'
-                  }`} />
-                </button>
               </div>
 
-              {/* Capital Ship Mode Toggle and Class Selector */}
-              <div className="space-y-3 pt-2.5 border-t border-slate-900">
-                <label className="text-xs font-bold text-slate-300 block">Formace flotily a styl lodi:</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCapitalShipMode(false);
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      !capitalShipMode
-                        ? 'bg-slate-900 border-indigo-500 text-slate-200 shadow-[0_0_12px_rgba(99,102,241,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">🛸</span>
-                      <span className="font-bold tracking-tight text-indigo-300">FLOTILA MALÝCH LODÍ</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Klasický styl. Každý hráč ovládá a střílí ze své vlastní malé obratné lodičky.
-                    </div>
-                  </button>
+              {/* RIGHT COLUMN: Mission & Ship Configuration Panel */}
+              <div className="bg-slate-950/80 p-3 border border-slate-850 rounded-xl space-y-2.5 text-left flex flex-col justify-between">
+                <span className="text-cyan-400 font-extrabold uppercase tracking-wider text-[9px] block font-sans">🛡️ NASTAVENÍ EXPEDIČNÍ MISE & FLOTILY</span>
+                
+                {/* Difficulty Select */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-300 block">Obtížnost:</label>
+                  <div className="grid grid-cols-4 gap-1.5 font-mono text-[9px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDifficulty('easy');
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                        difficulty === 'easy'
+                          ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)] font-bold'
+                          : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        SNADNÁ
+                      </span>
+                      <span className="text-[7px] text-slate-500 mt-0.5">Vrtání +50%</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCapitalShipMode(true);
-                      playLaserSound(0);
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[64px] ${
-                      capitalShipMode
-                        ? 'bg-indigo-950/30 border-cyan-500 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.15)] font-bold'
-                        : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm">🚢</span>
-                      <span className="font-bold tracking-tight text-cyan-300">SPOLEČNÁ VELKÁ LOĎ (MULTICREW)</span>
-                    </div>
-                    <div className="text-[8px] leading-tight mt-1 text-slate-400 font-sans">
-                      Styl Lovers in a Dangerous Spacetime. Všichni sdílí jednu velkou loď, obsazují stanice (Kormidelník, Střelci, Inženýr) a doplňují se!
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDifficulty('medium');
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                        difficulty === 'medium'
+                          ? 'bg-blue-950/40 border-blue-500 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.15)] font-bold'
+                          : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        STŘEDNÍ
+                      </span>
+                      <span className="text-[7px] text-slate-500 mt-0.5">Klasika</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDifficulty('hard');
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                        difficulty === 'hard'
+                          ? 'bg-amber-950/40 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
+                          : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        TĚŽKÁ
+                      </span>
+                      <span className="text-[7px] text-slate-500 mt-0.5">Škody +50%</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDifficulty('nightmare');
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col justify-center items-center ${
+                        difficulty === 'nightmare'
+                          ? 'bg-rose-950/40 border-rose-500 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.15)] font-bold animate-pulse'
+                          : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-rose-950/40 hover:text-slate-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1 text-rose-400 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                        NOČNÍ MŮRA
+                      </span>
+                      <span className="text-[7px] text-rose-500/80 mt-0.5">Škody +120%</span>
+                    </button>
+                  </div>
                 </div>
 
-                {capitalShipMode && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-3 bg-slate-950/80 rounded-xl border border-slate-850/80 space-y-2"
-                  >
-                    <span className="text-cyan-400 font-bold uppercase tracking-wider text-[9px] block">Vyberte třídu Velké Lodě:</span>
-                    <div className="grid grid-cols-2 gap-2 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCapitalShipType('mining');
-                          playLaserSound(0);
-                        }}
-                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                          selectedCapitalShipType === 'mining'
-                            ? 'bg-amber-950/20 border-amber-500 text-amber-300 font-bold'
-                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
-                        }`}
-                      >
-                        <span className="font-bold">⛏️ Těžařský křižník</span>
-                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
-                          • Trvanlivost: Vysoká (600 HP)<br/>
-                          • Vrták, Silný magnet a extra náklad
-                        </p>
-                      </button>
+                {/* Map / Sector Selection */}
+                <div className="space-y-1 pt-1.5 border-t border-slate-900">
+                  <label className="text-[10px] font-bold text-slate-300 block">Kosmický Sektor (Mapa):</label>
+                  <div className="grid grid-cols-2 gap-1.5 font-mono text-[9px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMap('silicon');
+                        playLaserSound(0);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        selectedMap === 'silicon'
+                          ? 'bg-slate-900 border-slate-500 text-slate-200 shadow-[0_0_12px_rgba(148,163,184,0.15)] font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>🪨</span>
+                        <span className="font-bold text-slate-300">ALPHA: KŘEMÍKOVÝ PÁS</span>
+                      </div>
+                      <div className="text-[7px] leading-tight text-slate-400 font-sans mt-0.5">
+                        Vyvážené suroviny (1.0x skóre)
+                      </div>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCapitalShipType('war');
-                          playLaserSound(0);
-                        }}
-                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                          selectedCapitalShipType === 'war'
-                            ? 'bg-red-950/20 border-red-500 text-red-300 font-bold'
-                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
-                        }`}
-                      >
-                        <span className="font-bold">🚀 Válečná fregata</span>
-                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
-                          • Trvanlivost: Střední (500 HP, 350 štít)<br/>
-                          • 3x laser + automatický raketomet
-                        </p>
-                      </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMap('magma');
+                        playLaserSound(0);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        selectedMap === 'magma'
+                          ? 'bg-orange-950/20 border-orange-500 text-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.15)] font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>🔥</span>
+                        <span className="font-bold text-orange-300">BETA: MAGMA PEKLO</span>
+                      </div>
+                      <div className="text-[7px] leading-tight text-slate-400 font-sans mt-0.5">
+                        Solární erupce (1.25x skóre)
+                      </div>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCapitalShipType('mothership');
-                          playLaserSound(0);
-                        }}
-                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                          selectedCapitalShipType === 'mothership'
-                            ? 'bg-purple-950/20 border-purple-500 text-purple-300 font-bold'
-                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
-                        }`}
-                      >
-                        <span className="font-bold">🛰️ Mateřská loď (Stoupa)</span>
-                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
-                          • Trvanlivost: Obrovská (800 HP, 400 štít)<br/>
-                          • 4x stanice + drony, hangáry
-                        </p>
-                      </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMap('ice');
+                        playLaserSound(0);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        selectedMap === 'ice'
+                          ? 'bg-sky-950/20 border-sky-500 text-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.15)] font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>❄️</span>
+                        <span className="font-bold text-sky-300">GAMMA: LEDOVÝ PRSTENEC</span>
+                      </div>
+                      <div className="text-[7px] leading-tight text-slate-400 font-sans mt-0.5">
+                        Blizzardy & Námraza (1.25x skóre)
+                      </div>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCapitalShipType('explorer');
-                          playLaserSound(0);
-                        }}
-                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                          selectedCapitalShipType === 'explorer'
-                            ? 'bg-emerald-950/20 border-emerald-500 text-emerald-300 font-bold'
-                            : 'bg-slate-900/40 border-slate-900 text-slate-400 hover:border-slate-800'
-                        }`}
-                      >
-                        <span className="font-bold">📡 Průzkumník</span>
-                        <p className="text-[8px] font-sans text-slate-400 mt-1 leading-snug">
-                          • Trvanlivost: Menší (300 HP)<br/>
-                          • Rychlý, nízká spotřeba, laser + vrták
-                        </p>
-                      </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMap('gold');
+                        playLaserSound(0);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        selectedMap === 'gold'
+                          ? 'bg-amber-950/20 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800 hover:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>👑</span>
+                        <span className="font-bold text-amber-300">DELTA: ZLATÉ JÁDRO</span>
+                      </div>
+                      <div className="text-[7px] leading-tight text-slate-400 font-sans mt-0.5">
+                        EM Bouře (1.5x skóre)
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Toggles (Enemies & Performance Mode) in 2 cols */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1.5 border-t border-slate-900">
+                  <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded-lg border border-slate-850">
+                    <div className="space-y-0.5 pr-1">
+                      <label className="text-[10px] font-bold text-slate-200 flex items-center gap-1">
+                        🛡️ Nepřátelé:
+                        <span className={`px-1 py-0.2 text-[7px] font-mono font-black uppercase rounded ${
+                          enemiesEnabled ? 'bg-red-950 text-red-400' : 'bg-emerald-950 text-emerald-400'
+                        }`}>
+                          {enemiesEnabled ? 'ANO' : 'NE'}
+                        </span>
+                      </label>
                     </div>
-                  </motion.div>
-                )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEnemiesEnabled(!enemiesEnabled);
+                        playLaserSound(0);
+                      }}
+                      className={`w-10 h-5 rounded-full p-0.5 transition-all cursor-pointer relative flex items-center shrink-0 ${
+                        enemiesEnabled ? 'bg-red-600' : 'bg-slate-800'
+                      }`}
+                      id="enemies-toggle-btn"
+                    >
+                      <div className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-all duration-200 ${
+                        enemiesEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded-lg border border-slate-850">
+                    <div className="space-y-0.5 pr-1">
+                      <label className="text-[10px] font-bold text-slate-200 flex items-center gap-1">
+                        <Cpu className="w-3 h-3 text-cyan-400" /> Úsporný režim:
+                        <span className={`px-1 py-0.2 text-[7px] font-mono font-black uppercase rounded ${
+                          lowPerformanceMode ? 'bg-cyan-950 text-cyan-400' : 'bg-slate-950 text-slate-400'
+                        }`}>
+                          {lowPerformanceMode ? 'ZAP' : 'VYP'}
+                        </span>
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLowPerformanceMode(!lowPerformanceMode);
+                        playLaserSound(0);
+                      }}
+                      className={`w-10 h-5 rounded-full p-0.5 transition-all cursor-pointer relative flex items-center shrink-0 ${
+                        lowPerformanceMode ? 'bg-cyan-600' : 'bg-slate-800'
+                      }`}
+                      id="performance-toggle-btn"
+                    >
+                      <div className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-all duration-200 ${
+                        lowPerformanceMode ? 'translate-x-5' : 'translate-x-0'
+                      }`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Capital Ship Mode Toggle */}
+                <div className="space-y-1.5 pt-1.5 border-t border-slate-900">
+                  <label className="text-[10px] font-bold text-slate-300 block">Formace flotily:</label>
+                  <div className="grid grid-cols-2 gap-1.5 font-mono text-[9px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCapitalShipMode(false);
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        !capitalShipMode
+                          ? 'bg-slate-900 border-indigo-500 text-slate-200 font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800'
+                      }`}
+                    >
+                      <span className="font-bold text-indigo-300">🛸 MALÉ LODĚ</span>
+                      <span className="text-[7px] text-slate-400 font-sans mt-0.5">Každý pilot má vlastní lodičku</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCapitalShipMode(true);
+                        playLaserSound(0);
+                      }}
+                      className={`p-1.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        capitalShipMode
+                          ? 'bg-indigo-950/30 border-cyan-500 text-cyan-400 font-bold'
+                          : 'bg-slate-950/40 border-slate-900 text-slate-500 hover:border-slate-800'
+                      }`}
+                    >
+                      <span className="font-bold text-cyan-300">🚢 VELKÁ LOĎ</span>
+                      <span className="text-[7px] text-slate-400 font-sans mt-0.5">Společná velká loď (Multicrew)</span>
+                    </button>
+                  </div>
+
+                  {capitalShipMode && (
+                    <div className="p-2 bg-slate-950/80 rounded-lg border border-slate-850/80 space-y-1">
+                      <span className="text-cyan-400 font-bold uppercase tracking-wider text-[8px] block">Třída velké lodi:</span>
+                      <div className="grid grid-cols-4 gap-1 text-[8px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCapitalShipType('mining');
+                            playLaserSound(0);
+                          }}
+                          className={`p-1 rounded border text-center transition-all cursor-pointer ${
+                            selectedCapitalShipType === 'mining'
+                              ? 'bg-amber-950/30 border-amber-500 text-amber-300 font-bold'
+                              : 'bg-slate-900/40 border-slate-900 text-slate-400'
+                          }`}
+                        >
+                          ⛏️ Těžař
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCapitalShipType('war');
+                            playLaserSound(0);
+                          }}
+                          className={`p-1 rounded border text-center transition-all cursor-pointer ${
+                            selectedCapitalShipType === 'war'
+                              ? 'bg-red-950/30 border-red-500 text-red-300 font-bold'
+                              : 'bg-slate-900/40 border-slate-900 text-slate-400'
+                          }`}
+                        >
+                          🚀 Fregata
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCapitalShipType('mothership');
+                            playLaserSound(0);
+                          }}
+                          className={`p-1 rounded border text-center transition-all cursor-pointer ${
+                            selectedCapitalShipType === 'mothership'
+                              ? 'bg-purple-950/30 border-purple-500 text-purple-300 font-bold'
+                              : 'bg-slate-900/40 border-slate-900 text-slate-400'
+                          }`}
+                        >
+                          🛰️ Mateřská
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCapitalShipType('explorer');
+                            playLaserSound(0);
+                          }}
+                          className={`p-1 rounded border text-center transition-all cursor-pointer ${
+                            selectedCapitalShipType === 'explorer'
+                              ? 'bg-emerald-950/30 border-emerald-500 text-emerald-300 font-bold'
+                              : 'bg-slate-900/40 border-slate-900 text-slate-400'
+                          }`}
+                        >
+                          📡 Průzkumník
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
+
             </div>
 
-            {/* Launch Actions */}
-            <div className="space-y-3 flex flex-col items-center">
-              <button
-                onClick={() => handleStartGame()}
-                className="w-full sm:w-auto px-10 py-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-xl shadow-orange-500/10 cursor-pointer hover:scale-105 active:scale-95 transition-all text-center"
-                id="portal-launch-run-btn"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                Spustit Motory a Vzlétnout
-              </button>
-
-              {upgrades.blackHoleActivator === 1 && (
-                <button
-                  onClick={() => handleStartGame(true)}
-                  className="w-full sm:w-auto px-10 py-4 rounded-xl bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 text-white font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2.5 shadow-xl shadow-red-500/30 cursor-pointer hover:scale-105 active:scale-95 transition-all text-center animate-pulse border border-red-400"
-                  id="portal-boss-launch-btn"
-                >
-                  <Skull className="w-4 h-4" />
-                  Aktivovat Černou Díru & Bojovat s Bossem
-                </button>
-              )}
-
-              {/* Reset Game Save and sound options */}
-              <div className="flex gap-4 text-xs font-mono text-slate-500 hover:text-slate-400">
+            {/* Launch Actions Horizontal Bar */}
+            <div className="pt-2 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+              <div className="flex gap-3 text-xs font-mono text-slate-500">
                 <button
                   onClick={handleToggleMute}
-                  className="hover:text-slate-300 cursor-pointer flex items-center gap-1.5"
+                  className="hover:text-slate-300 cursor-pointer flex items-center gap-1"
                   id="portal-sound-toggle"
                 >
                   {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
@@ -12088,7 +12243,29 @@ export default function App() {
                   className="hover:text-red-400 transition-colors cursor-pointer text-slate-500 text-left"
                   id="portal-reset-save-btn"
                 >
-                  Smazat herní uložený postup
+                  Smazat mezipaměť
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 w-full sm:w-auto">
+                {upgrades.blackHoleActivator === 1 && (
+                  <button
+                    onClick={() => handleStartGame(true)}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer hover:scale-105 active:scale-95 transition-all animate-pulse border border-red-400"
+                    id="portal-boss-launch-btn"
+                  >
+                    <Skull className="w-3.5 h-3.5" />
+                    Černá Díra & Boss
+                  </button>
+                )}
+
+                <button
+                  onClick={() => handleStartGame()}
+                  className="px-8 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl shadow-orange-500/10 cursor-pointer hover:scale-105 active:scale-95 transition-all text-center"
+                  id="portal-launch-run-btn"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  Spustit Motory a Vzlétnout
                 </button>
               </div>
             </div>

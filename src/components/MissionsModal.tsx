@@ -22,7 +22,11 @@ import {
   Check,
   Lock,
   Pin,
-  Layers
+  Search,
+  SlidersHorizontal,
+  Flame,
+  Zap,
+  ArrowUpDown
 } from 'lucide-react';
 import { PlayerStats } from '../types';
 
@@ -31,6 +35,7 @@ export interface Mission {
   title: string;
   description: string;
   category: 'mining' | 'combat' | 'exploration' | 'boss';
+  difficulty?: 'easy' | 'medium' | 'hard' | 'expert';
   targetType: 'mine_crystal' | 'mine_diamond' | 'mine_obsidian' | 'mine_gold' | 'mine_ice' | 'kill_pirates' | 'destroy_asteroids' | 'boss_kill' | 'super_magnet_use' | 'carrier_dock' | 'warp_jump' | 'buy_upgrade' | 'solar_storm_survive';
   targetAmount: number;
   currentAmount: number;
@@ -38,6 +43,11 @@ export interface Mission {
   rewardDiamonds: number;
   completed: boolean;
   claimed: boolean;
+  startTime?: number;
+  completedTime?: number;
+  bonusCrystalsGained?: number;
+  bonusDiamondsGained?: number;
+  bonusReason?: string;
 }
 
 export interface AchievementItem {
@@ -76,6 +86,10 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'missions' | 'achievements' | 'progress'>('missions');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'recommended' | 'reward' | 'progress' | 'difficulty' | 'name'>('recommended');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   const [claimedAchievements, setClaimedAchievements] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('cosmic_claimed_achievements');
@@ -118,13 +132,12 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
   const totalMissionsCount = missions.length;
   const missionsProgressPct = totalMissionsCount > 0 ? Math.round((totalMissionsCompleted / totalMissionsCount) * 100) : 0;
 
-  // Build Career Achievements list derived from playerStats and missions
+  // Derived counts for achievements
   const asteroidsMined = playerStats.totalAsteroidsMined || 0;
   const currentCrystals = playerStats.crystals || 0;
   const currentDiamonds = playerStats.diamonds || 0;
   const currentObsidian = playerStats.obsidian || 0;
 
-  // Derived counts from missions target trackers
   const piratesKilled = missions.find(m => m.id === 'm_kill_pirates_veteran')?.currentAmount || missions.find(m => m.id === 'm_kill_pirates')?.currentAmount || 0;
   const warpJumps = missions.find(m => m.id === 'm_warp_jump')?.currentAmount || 0;
   const carrierDocks = missions.find(m => m.id === 'm_carrier_dock')?.currentAmount || 0;
@@ -309,10 +322,60 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
     }
   };
 
-  const filteredMissions = missions.filter(m => {
-    if (selectedCategory === 'all') return true;
-    return m.category === selectedCategory;
-  });
+  // Helper for difficulty numerical weight
+  const getDifficultyWeight = (diff?: string) => {
+    switch (diff) {
+      case 'expert': return 4;
+      case 'hard': return 3;
+      case 'medium': return 2;
+      case 'easy':
+      default: return 1;
+    }
+  };
+
+  // Advanced Filtering & Sorting Logic
+  const filteredAndSortedMissions = missions
+    .filter(m => {
+      // Category filter
+      if (selectedCategory !== 'all' && m.category !== selectedCategory) return false;
+      // Difficulty filter
+      if (selectedDifficulty !== 'all' && (m.difficulty || 'easy') !== selectedDifficulty) return false;
+      // Search query
+      if (searchQuery.trim() !== '') {
+        const q = searchQuery.toLowerCase();
+        const titleMatch = m.title.toLowerCase().includes(q);
+        const descMatch = m.description.toLowerCase().includes(q);
+        if (!titleMatch && !descMatch) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'reward') {
+        const rewardA = a.rewardCrystals + a.rewardDiamonds * 50;
+        const rewardB = b.rewardCrystals + b.rewardDiamonds * 50;
+        return rewardB - rewardA;
+      }
+      if (sortBy === 'progress') {
+        const pctA = a.currentAmount / a.targetAmount;
+        const pctB = b.currentAmount / b.targetAmount;
+        return pctB - pctA;
+      }
+      if (sortBy === 'difficulty') {
+        return getDifficultyWeight(b.difficulty) - getDifficultyWeight(a.difficulty);
+      }
+      if (sortBy === 'name') {
+        return a.title.localeCompare(b.title);
+      }
+      // Default: 'recommended' -> Pinned first, then Unclaimed/Completed, then Unclaimed/Incomplete, then Claimed
+      const isPinnedA = pinnedMissionIds.includes(a.id);
+      const isPinnedB = pinnedMissionIds.includes(b.id);
+      if (isPinnedA !== isPinnedB) return isPinnedA ? -1 : 1;
+
+      if (a.claimed !== b.claimed) return a.claimed ? 1 : -1;
+      if (a.completed !== b.completed) return a.completed ? -1 : 1;
+
+      return getDifficultyWeight(b.difficulty) - getDifficultyWeight(a.difficulty);
+    });
 
   const getCategoryIcon = (category: Mission['category']) => {
     switch (category) {
@@ -325,6 +388,36 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
       case 'exploration':
       default:
         return <Compass className="w-4 h-4 text-purple-400" />;
+    }
+  };
+
+  const getDifficultyBadge = (difficulty?: Mission['difficulty']) => {
+    switch (difficulty) {
+      case 'expert':
+        return (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/80 border border-amber-500/60 text-amber-300 font-extrabold uppercase font-mono flex items-center gap-1 shadow-sm shadow-amber-500/20">
+            <Flame className="w-3 h-3 text-amber-400 fill-amber-400" /> EXPERT
+          </span>
+        );
+      case 'hard':
+        return (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-950/80 border border-purple-500/60 text-purple-300 font-extrabold uppercase font-mono flex items-center gap-1">
+            <Zap className="w-3 h-3 text-purple-400" /> TĚŽKÁ
+          </span>
+        );
+      case 'medium':
+        return (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-950/80 border border-blue-500/60 text-blue-300 font-extrabold uppercase font-mono flex items-center gap-1">
+            STŘEDNÍ
+          </span>
+        );
+      case 'easy':
+      default:
+        return (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 font-extrabold uppercase font-mono flex items-center gap-1">
+            SNADNÁ
+          </span>
+        );
     }
   };
 
@@ -353,7 +446,8 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ duration: 0.2 }}
-          className="relative w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          id="missions-dashboard-modal"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/60">
@@ -370,7 +464,7 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
                     </span>
                   )}
                 </h2>
-                <p className="text-xs text-slate-400">Můžete mít až 3 aktivní připnuté mise na HUD widgetu současně</p>
+                <p className="text-xs text-slate-400">Až 3 mise současně na HUD widgetu • Dynamické bonusy za rychlost a bouře</p>
               </div>
             </div>
 
@@ -439,48 +533,120 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
             )}
           </div>
 
-          {/* TAB 1: MISSIONS LIST */}
+          {/* TAB 1: MISSIONS LIST WITH ENHANCED FILTERING & SORTING */}
           {activeTab === 'missions' && (
             <div className="flex-1 flex flex-col min-h-0">
-              {/* Category Sub-Filters */}
-              <div className="px-6 py-2 bg-slate-950/40 border-b border-slate-800/60 flex items-center justify-between gap-2 overflow-x-auto text-xs shrink-0">
-                <div className="flex items-center gap-1.5">
-                  {[
-                    { id: 'all', label: 'Všechny', count: missions.length },
-                    { id: 'mining', label: '⛏️ Těžba', count: missions.filter(m => m.category === 'mining').length },
-                    { id: 'combat', label: '⚔️ Boj', count: missions.filter(m => m.category === 'combat').length },
-                    { id: 'boss', label: '☠️ Bossové', count: missions.filter(m => m.category === 'boss').length },
-                    { id: 'exploration', label: '🧭 Průzkum', count: missions.filter(m => m.category === 'exploration').length }
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setSelectedCategory(tab.id)}
-                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                        selectedCategory === tab.id
-                          ? 'bg-slate-800 text-white border border-violet-500/40'
-                          : 'bg-slate-950/60 text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`}
+              {/* Category & Search Filter Bar */}
+              <div className="px-6 py-2.5 bg-slate-950/60 border-b border-slate-800/80 space-y-2 shrink-0">
+                {/* Search & Sort & Difficulty bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {/* Search box */}
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Hledat misi..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/60"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Difficulty Sub-Filter */}
+                  <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-0.5" />
+                    <span className="text-[10px] text-slate-400 uppercase font-mono mr-1">OBTÍŽNOST:</span>
+                    {[
+                      { id: 'all', label: 'Vše' },
+                      { id: 'easy', label: 'Snadná' },
+                      { id: 'medium', label: 'Střední' },
+                      { id: 'hard', label: 'Těžká' },
+                      { id: 'expert', label: 'Expert' }
+                    ].map(d => (
+                      <button
+                        key={d.id}
+                        onClick={() => setSelectedDifficulty(d.id)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                          selectedDifficulty === d.id
+                            ? 'bg-violet-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Sort By Dropdown */}
+                  <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded-xl border border-slate-800 text-xs">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-violet-400" />
+                    <span className="text-[10px] text-slate-400 uppercase font-mono">ŘADIT:</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="bg-transparent text-xs text-slate-200 font-bold focus:outline-none cursor-pointer"
                     >
-                      <span>{tab.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950 font-mono text-slate-300">
-                        {tab.count}
-                      </span>
-                    </button>
-                  ))}
+                      <option value="recommended" className="bg-slate-900">Doporučené</option>
+                      <option value="reward" className="bg-slate-900">Nejvyšší odměna</option>
+                      <option value="progress" className="bg-slate-900">Nejvyšší pokrok</option>
+                      <option value="difficulty" className="bg-slate-900">Obtížnost</option>
+                      <option value="name" className="bg-slate-900">Abecedně</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="text-[10px] text-amber-400 font-mono font-bold flex items-center gap-1 shrink-0">
-                  <Pin className="w-3 h-3 fill-amber-400" />
-                  Připnuto: {pinnedMissionIds.length}/3 na HUD
+                {/* Category Pills Bar */}
+                <div className="flex items-center justify-between gap-2 overflow-x-auto text-xs pt-1">
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { id: 'all', label: 'Všechny Kategories', count: missions.length },
+                      { id: 'mining', label: '⛏️ Těžba', count: missions.filter(m => m.category === 'mining').length },
+                      { id: 'combat', label: '⚔️ Boj', count: missions.filter(m => m.category === 'combat').length },
+                      { id: 'boss', label: '☠️ Bossové', count: missions.filter(m => m.category === 'boss').length },
+                      { id: 'exploration', label: '🧭 Průzkum', count: missions.filter(m => m.category === 'exploration').length }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setSelectedCategory(tab.id)}
+                        className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                          selectedCategory === tab.id
+                            ? 'bg-slate-800 text-white border border-violet-500/40 shadow-sm'
+                            : 'bg-slate-950/60 text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950 font-mono text-slate-300">
+                          {tab.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="text-[10px] text-amber-400 font-mono font-bold flex items-center gap-1 shrink-0">
+                    <Pin className="w-3 h-3 fill-amber-400" />
+                    Připnuto: {pinnedMissionIds.length}/3 na HUD
+                  </div>
                 </div>
               </div>
 
-              {/* Missions Content Area */}
+              {/* Missions List */}
               <div className="p-6 space-y-3 overflow-y-auto flex-1">
-                {filteredMissions.length === 0 ? (
-                  <p className="text-center text-sm text-slate-500 py-8">Žádné mise v této kategorii.</p>
+                {filteredAndSortedMissions.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Target className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                    <p className="text-sm font-bold text-slate-400">Žádné mise neodpovídají zadaným filtrům.</p>
+                    <p className="text-xs text-slate-500 mt-1">Zkus změnit vyhledávací dotaz nebo vybrat jinou obtížnost.</p>
+                  </div>
                 ) : (
-                  filteredMissions.map((m) => {
+                  filteredAndSortedMissions.map((m) => {
                     const progressPct = Math.min(100, Math.round((m.currentAmount / m.targetAmount) * 100));
                     const pinnedIndex = pinnedMissionIds.indexOf(m.id);
                     const isPinned = pinnedIndex !== -1;
@@ -488,7 +654,7 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
                     return (
                       <div
                         key={m.id}
-                        className={`relative p-4 rounded-xl border transition-all ${
+                        className={`relative p-4 rounded-2xl border transition-all ${
                           m.claimed
                             ? 'bg-slate-950/40 border-slate-900/60 opacity-60'
                             : m.completed
@@ -498,24 +664,30 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-start gap-3">
-                            <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 mt-0.5">
+                            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 mt-0.5 shrink-0">
                               {getCategoryIcon(m.category)}
                             </div>
                             <div>
-                              <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
-                                {m.title}
+                              <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                                <h3 className="font-bold text-sm text-slate-100">
+                                  {m.title}
+                                </h3>
+
+                                {/* Difficulty badge */}
+                                {getDifficultyBadge(m.difficulty)}
+
                                 {isPinned && (
-                                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold flex items-center gap-1">
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold flex items-center gap-1 font-mono">
                                     <Pin className="w-3 h-3 fill-amber-400" /> HUD Priorita #{pinnedIndex + 1}
                                   </span>
                                 )}
                                 {m.claimed && (
-                                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-normal">
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-normal">
                                     Vybráno
                                   </span>
                                 )}
-                              </h3>
-                              <p className="text-xs text-slate-400 mt-0.5">{m.description}</p>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{m.description}</p>
                             </div>
                           </div>
 
@@ -525,7 +697,7 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
                               {!m.claimed && (
                                 <button
                                   onClick={() => onTogglePinMission(m.id)}
-                                  className={`px-2 py-1 rounded-lg border text-xs font-mono font-bold transition-colors cursor-pointer flex items-center gap-1 ${
+                                  className={`px-2.5 py-1 rounded-lg border text-xs font-mono font-bold transition-colors cursor-pointer flex items-center gap-1 ${
                                     isPinned
                                       ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
                                       : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
@@ -556,7 +728,7 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
                             {m.completed && !m.claimed ? (
                               <button
                                 onClick={() => onClaimReward(m.id)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs tracking-wide shadow-md shadow-emerald-500/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs tracking-wide shadow-md shadow-emerald-500/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
                               >
                                 <Gift className="w-3.5 h-3.5" />
                                 VYBRAT ODMĚNU

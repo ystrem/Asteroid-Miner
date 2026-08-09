@@ -6,7 +6,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mission } from './MissionsModal';
-import { Trophy, Sparkles, Gem, CheckCircle, ArrowRight, X, Gift } from 'lucide-react';
+import { Trophy, Sparkles, Gem, CheckCircle, ArrowRight, X, Gift, Zap, Flame, Clock } from 'lucide-react';
 
 interface MissionCompletedModalProps {
   mission: Mission | null;
@@ -27,6 +27,12 @@ export const MissionCompletedModal: React.FC<MissionCompletedModalProps> = ({
     onClaimReward(mission.id);
     onClose();
   };
+
+  const bonusCrystals = mission.bonusCrystalsGained || 0;
+  const bonusDiamonds = mission.bonusDiamondsGained || 0;
+  const totalCrystals = mission.rewardCrystals + bonusCrystals;
+  const totalDiamonds = mission.rewardDiamonds + bonusDiamonds;
+  const hasBonus = bonusCrystals > 0 || bonusDiamonds > 0 || !!mission.bonusReason;
 
   return (
     <AnimatePresence>
@@ -55,7 +61,7 @@ export const MissionCompletedModal: React.FC<MissionCompletedModalProps> = ({
             initial={{ rotate: -15, scale: 0.5 }}
             animate={{ rotate: 0, scale: 1 }}
             transition={{ delay: 0.1, type: 'spring' }}
-            className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-emerald-400 to-teal-600 p-0.5 shadow-xl shadow-emerald-500/30 flex items-center justify-center"
+            className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-600 p-0.5 shadow-xl shadow-emerald-500/30 flex items-center justify-center"
           >
             <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
               <Trophy className="w-10 h-10 text-emerald-400 animate-bounce" />
@@ -64,21 +70,40 @@ export const MissionCompletedModal: React.FC<MissionCompletedModalProps> = ({
 
           {/* Title */}
           <span className="text-[10px] font-black uppercase font-mono tracking-widest text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-3 py-1 rounded-full inline-block mb-2">
-            🎯 MISE SPUŠTĚNA & SPLNĚNA!
+            🎯 MISE USPEŠNĚ SPLNĚNA!
           </span>
 
           <h3 className="text-xl font-black text-white mb-1 leading-tight">
             {mission.title}
           </h3>
 
-          <p className="text-xs text-slate-400 max-w-xs mx-auto mb-5 leading-relaxed">
+          <p className="text-xs text-slate-400 max-w-xs mx-auto mb-4 leading-relaxed">
             {mission.description}
           </p>
+
+          {/* Dynamic Bonus Banner if active */}
+          {hasBonus && (
+            <div className="mb-4 p-3 rounded-2xl bg-gradient-to-r from-amber-950/90 via-orange-950/80 to-amber-950/90 border border-amber-500/60 shadow-lg shadow-amber-500/10 text-left animate-pulse">
+              <div className="flex items-center gap-2 mb-1">
+                <Zap className="w-4 h-4 text-amber-400 fill-amber-400 shrink-0" />
+                <span className="text-xs font-black text-amber-300 uppercase font-mono tracking-wider">
+                  ⚡ DYNAMICKÝ REKORDNÍ BONUS NAVÝŠEN!
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 font-medium">
+                {mission.bonusReason || 'Splněno za ztížených podmínek nebo v rekordním čase!'}
+              </p>
+              <div className="mt-1.5 flex items-center gap-3 font-mono text-xs font-bold text-amber-300">
+                {bonusCrystals > 0 && <span>+ {bonusCrystals} Extra Krystalů</span>}
+                {bonusDiamonds > 0 && <span>+ {bonusDiamonds} Extra Diamantů</span>}
+              </div>
+            </div>
+          )}
 
           {/* Reward Breakdown Box */}
           <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 mb-6 shadow-inner">
             <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 block mb-3 text-left">
-              🎁 DETAILNÍ PŘEHLED ZÍSKANÝCH ODMĚN:
+              🎁 CELKOVÝ ZÍSKANÝ ODMĚNOVÝ BALÍČEK:
             </span>
 
             <div className="grid grid-cols-2 gap-3">
@@ -90,8 +115,13 @@ export const MissionCompletedModal: React.FC<MissionCompletedModalProps> = ({
                 <div className="text-left">
                   <span className="text-[9px] font-mono text-cyan-300/80 uppercase block">Krystaly</span>
                   <span className="text-base font-black text-cyan-300 font-mono">
-                    +{mission.rewardCrystals}
+                    +{totalCrystals}
                   </span>
+                  {bonusCrystals > 0 && (
+                    <span className="text-[9px] text-amber-400 block font-mono">
+                      (vč. +{bonusCrystals} bonus)
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -103,8 +133,13 @@ export const MissionCompletedModal: React.FC<MissionCompletedModalProps> = ({
                 <div className="text-left">
                   <span className="text-[9px] font-mono text-violet-300/80 uppercase block">Diamanty</span>
                   <span className="text-base font-black text-violet-300 font-mono">
-                    +{mission.rewardDiamonds}
+                    +{totalDiamonds}
                   </span>
+                  {bonusDiamonds > 0 && (
+                    <span className="text-[9px] text-amber-400 block font-mono">
+                      (vč. +{bonusDiamonds} bonus)
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
