@@ -25,6 +25,7 @@ const DEFAULT_UPGRADES: Upgrades = {
   quantumMirrorLevel: 0,
   toxicTrailLevel: 0,
   salvageMagnetLevel: 0,
+  autoRepairSpeedLevel: 0,
   playerShipClass: 'standard',
   
   // Carrier defaults

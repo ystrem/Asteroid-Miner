@@ -23,7 +23,8 @@ import {
   AlertTriangle,
   Info,
   Ship,
-  Flame
+  Flame,
+  Wrench
 } from 'lucide-react';
 
 interface UpgradeShopProps {
@@ -740,6 +741,39 @@ export default function UpgradeShop({
           costs: { crystals: 0, diamonds: 30, obsidian: 6 },
         }
       ]
+    },
+    {
+      id: 'autoRepairSpeedLevel',
+      name: 'Nanorobotická oprava trupu',
+      description: 'Zrychluje samočinnou regeneraci trupu mimo boj. Základní systém opraví 1 % trupu každých 10 sekund; každá úroveň zkracuje čas mezi opravami.',
+      icon: <Wrench className="w-5 h-5 text-emerald-400" id="icon-auto-repair" />,
+      maxLevel: 4,
+      levels: [
+        {
+          level: 1,
+          title: 'Nanoroboti I. generace',
+          description: 'Zkrátí interval automatické opravy trupu z 10 s na 8 s mimo boj (1 % každých 8 s).',
+          costs: { crystals: 400, diamonds: 10, obsidian: 2 },
+        },
+        {
+          level: 2,
+          title: 'Molekulární opravárenské klastry',
+          description: 'Zkrátí interval automatické opravy trupu na 6 s mimo boj (1 % každých 6 s).',
+          costs: { crystals: 900, diamonds: 24, obsidian: 5 },
+        },
+        {
+          level: 3,
+          title: 'Kvantový reparační biogel',
+          description: 'Zkrátí interval automatické opravy trupu na 4.5 s mimo boj (1 % každých 4.5 s).',
+          costs: { crystals: 1800, diamonds: 50, obsidian: 12 },
+        },
+        {
+          level: 4,
+          title: 'Singulární nanomatrice',
+          description: 'Maximální výkon: oprava trupu probíhá bleskově každé 3 sekundy mimo boj!',
+          costs: { crystals: 3500, diamonds: 90, obsidian: 25 },
+        }
+      ]
     }
   ];
 
@@ -780,6 +814,9 @@ export default function UpgradeShop({
     ],
     salvageMagnetLevel: [
       { id: 'magnetLevel', minLevel: 2, name: 'Gravitační magnet II' }
+    ],
+    autoRepairSpeedLevel: [
+      { id: 'hullLevel', minLevel: 2, name: 'Zesílený trup II' }
     ]
   };
 
@@ -795,7 +832,7 @@ export default function UpgradeShop({
       category: 'Konstrukce & Štíty',
       desc: 'Pasivní obrana a pohlcování rázů',
       colorClass: 'border-blue-900/40 bg-blue-950/5 text-blue-400',
-      nodes: ['hullLevel', 'shieldLevel', 'quantumMirrorLevel', 'abilityPulseLevel'] as (keyof Upgrades)[]
+      nodes: ['hullLevel', 'shieldLevel', 'autoRepairSpeedLevel', 'quantumMirrorLevel', 'abilityPulseLevel'] as (keyof Upgrades)[]
     },
     {
       category: 'Podpora & Těžba',

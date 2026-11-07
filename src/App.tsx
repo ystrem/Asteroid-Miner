@@ -62,6 +62,8 @@ import EarningsChartModal, { EarningDataPoint } from './components/EarningsChart
 import MissionsModal, { Mission } from './components/MissionsModal';
 import ActiveMissionHudWidget from './components/ActiveMissionHudWidget';
 import MissionCompletedModal from './components/MissionCompletedModal';
+import { PixelEditorsModal } from './components/PixelEditorsModal';
+import { CustomPlanetData, getActiveShipSprite, saveActiveShipSprite, getActivePlanetSprites, PLAYER_SHIP_SPRITE, PLANET_SPRITES } from './data/sprites';
 import { generateSectors, Sector, SectorType } from './data/sectors';
 import { 
   Swords, 
@@ -86,11 +88,12 @@ import {
   Users,
   Skull,
   Cpu,
-  Map,
+  Map as MapIcon,
   Ship,
   Flame,
   TrendingUp,
-  CheckSquare
+  CheckSquare,
+  Paintbrush
 } from 'lucide-react';
 
 // Optimize performance by patching canvas shadowBlur setter once globally
@@ -219,6 +222,84 @@ export default function App() {
   // --- EARNINGS HISTORY GRAPH STATE ---
   const [isEarningsChartOpen, setIsEarningsChartOpen] = useState<boolean>(false);
   const [earningsHistory, setEarningsHistory] = useState<EarningDataPoint[]>([]);
+
+  // --- PIXEL ART EDITORS (SHIP & PLANET) STATE ---
+  const [isPixelEditorsOpen, setIsPixelEditorsOpen] = useState<boolean>(false);
+  const customShipDataUrlRef = useRef<string>(getActiveShipSprite());
+  const customShipImageRef = useRef<HTMLImageElement | null>(null);
+  const customPlanetImagesMapRef = useRef<Map<string, HTMLImageElement>>(new Map());
+
+  // Load active custom ship sprite image on mount
+  useEffect(() => {
+    const spriteUrl = getActiveShipSprite();
+    if (spriteUrl) {
+      const img = new Image();
+      img.src = spriteUrl;
+      img.onload = () => {
+        customShipImageRef.current = img;
+      };
+    }
+  }, []);
+
+  const handleApplyShipSprite = (dataUrl: string) => {
+    customShipDataUrlRef.current = dataUrl;
+    if (dataUrl) {
+      const img = new Image();
+      img.src = dataUrl;
+      img.onload = () => {
+        customShipImageRef.current = img;
+      };
+    } else {
+      customShipImageRef.current = null;
+    }
+    playUpgradeSound();
+  };
+
+  const handleAddPlanetToWorld = (planet: CustomPlanetData) => {
+    const img = new Image();
+    img.src = planet.dataUrl;
+    img.onload = () => {
+      customPlanetImagesMapRef.current.set(planet.dataUrl, img);
+    };
+
+    if (playersRef.current.length > 0) {
+      const p = playersRef.current[0];
+      const spawnX = p.x + Math.cos(p.angle) * 220;
+      const spawnY = p.y + Math.sin(p.angle) * 220;
+
+      const r = planet.radius || 50;
+      const vertices = [];
+      const count = 16;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        vertices.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+      }
+
+      const newAsteroid: Asteroid = {
+        id: planet.id,
+        x: spawnX,
+        y: spawnY,
+        vx: (Math.random() - 0.5) * 0.2,
+        vy: (Math.random() - 0.5) * 0.2,
+        angle: 0,
+        angularVelocity: (Math.random() - 0.5) * 0.003,
+        size: 'colossal',
+        hp: planet.type === 'lava' ? 350 : planet.type === 'gold' ? 600 : 300,
+        maxHp: planet.type === 'lava' ? 350 : planet.type === 'gold' ? 600 : 300,
+        radius: r,
+        vertices,
+        color: planet.type === 'lava' ? '#ea580c' : planet.type === 'ice' ? '#38bdf8' : planet.type === 'gold' ? '#f59e0b' : '#10b981',
+        points: 800,
+        asteroidType: planet.type === 'ice' ? 'ice' : planet.type === 'lava' ? 'magma' : planet.type === 'gold' ? 'gold-rush' : 'common',
+      };
+
+      (newAsteroid as any).customPlanetDataUrl = planet.dataUrl;
+      (newAsteroid as any).customPlanetName = planet.name;
+
+      asteroidsRef.current.push(newAsteroid);
+      playUpgradeSound();
+    }
+  };
 
   // --- MISSIONS & CONTRACTS STATE ---
   const [isMissionsOpen, setIsMissionsOpen] = useState<boolean>(false);
@@ -2460,6 +2541,7 @@ export default function App() {
       quantumMirrorLevel: 0,
       toxicTrailLevel: 0,
       salvageMagnetLevel: 0,
+      autoRepairSpeedLevel: 0,
       playerShipClass: 'standard',
       carrierClass: 'none',
       carrierHullLevel: 0,
@@ -2985,6 +3067,80 @@ export default function App() {
         laser.radius *= 1.35;
       }
     }
+  };
+
+  // --- AUTO REPAIR HULL SYSTEM (HEALS 1% HULL EVERY 10 SECONDS OUT OF COMBAT) ---
+  const autoRepairHull = () => {
+    if (!isPlayingRef.current) return;
+    const now = Date.now();
+    const repairSpeedLevel = upgradesRef.current.autoRepairSpeedLevel || 0;
+    
+    // Base interval is 10 seconds (10000 ms).
+    // Upgrade levels in UpgradeShop accelerate this repair interval:
+    // Level 0: 10.0 s
+    // Level 1: 8.0 s
+    // Level 2: 6.0 s
+    // Level 3: 4.5 s
+    // Level 4: 3.0 s
+    const intervalTable = [10000, 8000, 6000, 4500, 3000];
+    const repairIntervalMs = intervalTable[Math.min(repairSpeedLevel, intervalTable.length - 1)];
+
+    playersRef.current.forEach((player) => {
+      // Player must be alive and have less than full hull
+      if (player.hull <= 0 || player.hull >= player.maxHull) {
+        player.lastAutoRepairTime = now;
+        return;
+      }
+
+      // Check out-of-combat condition:
+      // Player must not have taken hull/shield hits or fought in the last 8 seconds
+      const lastCombat = Math.max(
+        player.lastHullHitTime || 0,
+        player.lastShieldHitTime || 0,
+        player.lastCombatTime || 0
+      );
+      const isOutOfCombat = (now - lastCombat) >= 8000;
+
+      if (!isOutOfCombat) {
+        // Reset timer while actively in combat so the full cooldown must pass after disengaging
+        player.lastAutoRepairTime = now;
+        return;
+      }
+
+      // Initialize timestamp if needed
+      if (!player.lastAutoRepairTime) {
+        player.lastAutoRepairTime = now;
+        return;
+      }
+
+      // Check if repair interval has elapsed
+      if (now - player.lastAutoRepairTime >= repairIntervalMs) {
+        player.lastAutoRepairTime = now;
+        const healAmount = Math.max(1, +(player.maxHull * 0.01).toFixed(1));
+        const prevHull = player.hull;
+        player.hull = Math.min(player.maxHull, +(player.hull + healAmount).toFixed(1));
+
+        if (player.hull > prevHull) {
+          // Floating HUD message
+          addGainNotification(`🔧 ${player.name}: +${healAmount} HP (Auto-oprava trupu)`, '#34d399');
+          // Emit green nanite healing sparks around the ship
+          for (let i = 0; i < 4; i++) {
+            particlesRef.current.push({
+              id: Math.random().toString(36).substring(2, 9),
+              x: player.x,
+              y: player.y,
+              vx: (Math.random() - 0.5) * 3,
+              vy: (Math.random() - 0.5) * 3,
+              color: '#34d399',
+              size: Math.random() * 2 + 1.5,
+              alpha: 0.9,
+              lifetime: 0,
+              maxLifetime: 28,
+            });
+          }
+        }
+      }
+    });
   };
 
   // --- MAIN SIMULATION GAME TICK ENGINE ---
@@ -4407,6 +4563,9 @@ export default function App() {
         }
       }
     });
+
+    // --- AUTO-REPAIR HULL SYSTEM TICK (1% EVERY 10S OUT OF COMBAT) ---
+    autoRepairHull();
 
     // --- UPDATE SOLAR STROM PROCESSES ---
     if (solarStormDurationRef.current > 0) {
@@ -8280,14 +8439,45 @@ export default function App() {
         ctx.shadowBlur = ast.size === 'colossal' ? 8 : ast.size === 'huge' ? 5 : 2;
         ctx.shadowColor = ast.color;
 
-        ctx.beginPath();
-        ctx.moveTo(ast.vertices[0].x, ast.vertices[0].y);
-        for (let i = 1; i < ast.vertices.length; i++) {
-          ctx.lineTo(ast.vertices[i].x, ast.vertices[i].y);
+        const customDataUrl = (ast as any).customPlanetDataUrl;
+        if (customDataUrl) {
+          let pImg = customPlanetImagesMapRef.current.get(customDataUrl);
+          if (!pImg) {
+            pImg = new Image();
+            pImg.src = customDataUrl;
+            customPlanetImagesMapRef.current.set(customDataUrl, pImg);
+          }
+          if (pImg.complete) {
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(pImg, -ast.radius, -ast.radius, ast.radius * 2, ast.radius * 2);
+          } else {
+            ctx.beginPath();
+            ctx.arc(0, 0, ast.radius, 0, Math.PI * 2);
+            ctx.fillStyle = ast.color;
+            ctx.fill();
+            ctx.stroke();
+          }
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(ast.vertices[0].x, ast.vertices[0].y);
+          for (let i = 1; i < ast.vertices.length; i++) {
+            ctx.lineTo(ast.vertices[i].x, ast.vertices[i].y);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
         }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+
+        if ((ast as any).customPlanetName) {
+          ctx.save();
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillStyle = '#f8fafc';
+          ctx.textAlign = 'center';
+          ctx.shadowBlur = 6;
+          ctx.shadowColor = '#000000';
+          ctx.fillText(`🪐 ${(ast as any).customPlanetName}`, 0, -ast.radius - 8);
+          ctx.restore();
+        }
 
         if (ast.asteroidType === 'magma') {
           ctx.strokeStyle = 'rgba(249, 115, 22, 0.85)';
@@ -9413,7 +9603,13 @@ export default function App() {
 
         const sClass = upgradesRef.current.playerShipClass || 'standard';
 
-        if (sClass === 'standard') {
+        if (customShipImageRef.current) {
+          ctx.save();
+          ctx.rotate(Math.PI / 2); // Rotate grid top (nose) to facing direction (+X)
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(customShipImageRef.current, -22, -22, 44, 44);
+          ctx.restore();
+        } else if (sClass === 'standard') {
           ctx.beginPath();
           ctx.moveTo(22, 0);
           ctx.lineTo(-10, -16);
@@ -11236,6 +11432,74 @@ export default function App() {
         ctx.restore();
       }
     }
+
+    // --- VIGNETTE RED PULSE EFFECT ON ENTIRE CANVAS ---
+    // Intensifies when player health drops below 25% to indicate critical ship condition
+    if (isPlayingRef.current && playersRef.current.length > 0) {
+      const activePl = playersRef.current.find(pl => pl.hull > 0) || playersRef.current[0];
+      if (activePl && activePl.maxHull > 0) {
+        const healthFraction = Math.max(0, activePl.hull / activePl.maxHull);
+        const isCritical = healthFraction < 0.25;
+        const timeSinceHit = Date.now() - (activePl.lastHullHitTime || 0);
+        const isHitFlash = timeSinceHit < 450;
+
+        if (isCritical || isHitFlash) {
+          ctx.save();
+          // Danger intensity increases from 0 (at 25% health) to 1.0 (at 0% health)
+          const dangerIntensity = isCritical ? Math.min(1, Math.max(0, (0.25 - healthFraction) / 0.25)) : 0;
+          
+          // Rhythmic heartbeat pulse frequency: faster when closer to death (3.5 to 10.0 rad/s)
+          const pulseSpeed = 3.5 + dangerIntensity * 6.5;
+          const pulseWave = 0.5 + 0.5 * Math.sin(Date.now() * 0.001 * pulseSpeed);
+          
+          // Calculate alpha intensity: base + pulse + damage flash
+          let vignetteAlpha = 0;
+          if (isCritical) {
+            const baseAlpha = 0.22 + dangerIntensity * 0.42; // 0.22 at 25% -> 0.64 at 0%
+            const heartbeatAlpha = (0.15 + dangerIntensity * 0.25) * pulseWave;
+            vignetteAlpha = baseAlpha + heartbeatAlpha;
+          }
+          if (isHitFlash) {
+            const hitFactor = (1 - timeSinceHit / 450) * 0.35;
+            vignetteAlpha = Math.max(vignetteAlpha, hitFactor + (isCritical ? vignetteAlpha * 0.5 : 0));
+          }
+          vignetteAlpha = Math.max(0.05, Math.min(0.92, vignetteAlpha));
+
+          // Full-screen radial vignette gradient
+          const cx = width / 2;
+          const cy = height / 2;
+          // Inner clear circle shrinks as health gets lower
+          const innerRadius = Math.min(width, height) * (0.34 - dangerIntensity * 0.16);
+          const outerRadius = Math.max(width, height) * 0.72;
+
+          const vignetteGrad = ctx.createRadialGradient(cx, cy, innerRadius, cx, cy, outerRadius);
+          vignetteGrad.addColorStop(0, 'rgba(239, 68, 68, 0)');
+          vignetteGrad.addColorStop(0.5, `rgba(220, 38, 38, ${(vignetteAlpha * 0.35).toFixed(3)})`);
+          vignetteGrad.addColorStop(0.82, `rgba(185, 28, 28, ${(vignetteAlpha * 0.75).toFixed(3)})`);
+          vignetteGrad.addColorStop(1, `rgba(127, 29, 29, ${vignetteAlpha.toFixed(3)})`);
+
+          ctx.fillStyle = vignetteGrad;
+          ctx.fillRect(0, 0, width, height);
+
+          // Deep red pulsing perimeter border stroke
+          ctx.strokeStyle = `rgba(239, 68, 68, ${(vignetteAlpha * 0.85).toFixed(3)})`;
+          ctx.lineWidth = 4 + dangerIntensity * 8;
+          ctx.strokeRect(0, 0, width, height);
+
+          // Top warning indicator text when health is critically low
+          if (isCritical && pulseWave > 0.35) {
+            ctx.font = '900 13px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = `rgba(239, 68, 68, ${(0.7 + dangerIntensity * 0.3).toFixed(2)})`;
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 12;
+            ctx.fillText(`🚨 KRITICKÝ STAV TRUPU: ${Math.round(healthFraction * 100)} % 🚨`, cx, 40);
+          }
+
+          ctx.restore();
+        }
+      }
+    }
   };
 
   // --- RE-IGNITE GAME RUN CLEAN ---
@@ -11551,8 +11815,16 @@ export default function App() {
           {/* RIGHT FLOATING QUICK GUIDE */}
           <div className="absolute right-4 top-24 pointer-events-auto flex flex-col gap-2 items-end">
             <button 
+              onClick={() => setIsPixelEditorsOpen(true)}
+              className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 border border-cyan-400/50 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-cyan-500/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+              id="hud-open-pixel-editors-button"
+            >
+              <Paintbrush className="w-4.5 h-4.5 text-cyan-200" />
+              🎨 Editor Lodí & Planet
+            </button>
+            <button 
               onClick={() => setIsShopOpen(true)}
-              className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm uppercase tracking-wider shadow-lg shadow-amber-500/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
               id="hud-open-shop-button"
             >
               <Zap className="w-4 h-4 fill-current" />
@@ -11567,7 +11839,7 @@ export default function App() {
               className="flex items-center gap-2 px-4 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-violet-600/20 cursor-pointer hover:scale-105 active:scale-95 transition-all"
               id="hud-open-map-button"
             >
-              <Map className="w-4 h-4" />
+              <MapIcon className="w-4 h-4" />
               Sektorová Mapa 🌌
             </button>
             <button 
@@ -11858,9 +12130,16 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/50 p-2 rounded-lg border border-slate-850/80 text-[10px] text-slate-300 leading-snug font-sans">
-                    <span className="text-emerald-400 font-extrabold block border-b border-slate-950 pb-0.5 mb-1 text-[9px] uppercase">🎮 GAMEPADY / STEAM DECK (AUTOMATICKÝ DROP-IN)</span>
-                    <p className="font-mono text-[9px] text-slate-400">
+                  <div className="bg-gradient-to-r from-slate-900/80 via-cyan-950/20 to-slate-900/80 p-2.5 rounded-lg border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)] text-[10px] text-slate-300 leading-snug font-sans">
+                    <span className="text-cyan-300 font-extrabold block border-b-2 border-cyan-400 pb-1 mb-1.5 text-[9.5px] uppercase tracking-wide flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <span>🎮</span>
+                        <span className="underline decoration-cyan-400 decoration-2 underline-offset-4">GAMEPADY / STEAM DECK</span>
+                        <span>(AUTOMATICKÝ DROP-IN)</span>
+                      </span>
+                      <span className="text-[8px] bg-cyan-950/80 text-cyan-300 border border-cyan-500/50 px-1.5 py-0.5 rounded font-mono font-bold">PLUG & PLAY</span>
+                    </span>
+                    <p className="font-mono text-[9px] text-slate-300">
                       • <b>Let:</b> Levý Trigger [LT] • <b>Laser:</b> Pravý Trigger [RT] • <b>Pohyb/Otáčení:</b> Páčky • <b>Schopnosti:</b> [X, Y, B]
                     </p>
                   </div>
@@ -12577,7 +12856,7 @@ export default function App() {
             <div className="w-full md:w-3/5 p-6 flex flex-col border-b md:border-b-0 md:border-r border-slate-800">
               <div className="mb-4">
                 <h3 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400 uppercase tracking-wider flex items-center gap-2">
-                  <Map className="w-5 h-5 text-violet-400 animate-pulse" />
+                  <MapIcon className="w-5 h-5 text-violet-400 animate-pulse" />
                   Sektorový Navigační Systém
                 </h3>
                 <p className="text-xs text-slate-400">
@@ -12902,6 +13181,16 @@ export default function App() {
           {missionToast}
         </div>
       )}
+
+      {/* 11. PIXEL ART EDITORS (SHIP 16x16 & PLANET 32x32) */}
+      <PixelEditorsModal
+        isOpen={isPixelEditorsOpen}
+        onClose={() => setIsPixelEditorsOpen(false)}
+        onApplyShipSprite={handleApplyShipSprite}
+        onAddPlanetToWorld={handleAddPlanetToWorld}
+        playLaserSound={playLaserSound}
+        playUpgradeSound={playUpgradeSound}
+      />
 
     </div>
   );

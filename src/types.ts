@@ -159,6 +159,7 @@ export interface Upgrades {
   quantumMirrorLevel: number;      // 0 to 1 (Quantum Mirror upgrade)
   toxicTrailLevel: number;         // 0 to 1 (Toxic/Reactive Trail exhaust upgrade)
   salvageMagnetLevel: number;      // 0 to 1 (Salvage Magnet / Combo scaling upgrade)
+  autoRepairSpeedLevel: number;    // 0 to 4 (Urychlovač auto-opravy trupu)
   playerShipClass: PlayerShipClass;
   
   // Carrier Upgrades
@@ -213,6 +214,8 @@ export interface Player {
   // Dynamic Brainstorm Mechanics
   lastShieldHitTime?: number;
   lastHullHitTime?: number;
+  lastCombatTime?: number;
+  lastAutoRepairTime?: number;
   anchoredAsteroidId?: string;
   anchorAngle?: number;
   anchorRadius?: number;
